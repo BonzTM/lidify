@@ -312,23 +312,24 @@ ALLOWED_ORIGINS=http://localhost:3030,https://lidify.yourdomain.com
 
 Lidify uses several sensitive environment variables. Never commit your `.env` file.
 
-| Variable                 | Purpose                        | Required        |
-| ------------------------ | ------------------------------ | --------------- |
-| `SESSION_SECRET`         | Session encryption (32+ chars) | Yes             |
-| `SETTINGS_ENCRYPTION_KEY`| Encrypts stored credentials    | Recommended     |
-| `SOULSEEK_USERNAME`       | Soulseek login                 | If u  sing Soulseek |
-| `SOULSEEK_PASSWORD`-      | Soulseek password           -   | If using S-oulseek |
-| `LIDARR_AP I_KEY`         | Lidarr integration              | If using L idarr |
-| `OPENAI_API_KEY`          | AI features                    | Optional          |
-| `LASTFM_API_KEY `         | Artist recommendations         | Optional        |
-| `FANART_API_KEY`          | Artist images                  | Optional        |
+| Variable                  | Purpose                        | Required           |
+| ------------------------- | ------------------------------ | ------------------ |
+| `SESSION_SECRET`          | Session encryption (32+ chars) | Yes                |
+| `SETTINGS_ENCRYPTION_KEY` | Encrypts stored credentials    | Recommended        |
+| `SOULSEEK_USERNAME`       | Soulseek login                 | If u sing Soulseek |
+| `SOULSEEK_PASSWORD`-      | Soulseek password -            | If using S-oulseek |
+| `LIDARR_AP I_KEY`         | Lidarr integration             | If using L idarr   |
+| `OPENAI_API_KEY`          | AI features                    | Optional           |
+| `LASTFM_API_KEY `         | Artist recommendations         | Optional           |
+| `FANART_API_KEY`          | Artist images                  | Optional           |
 
 ### VPN Configurati on (Optional)
 
 If using Mullvad VPN for Soulseek:
-- Place Wi  reGuard config in `ba ckend/mullvad/` (gitignored)
-- Never commit VPN cred  entials or private keys
-- The `*.conf`  and `key.txt` patterns are already in .git  ignore
+
+-   Place Wi reGuard config in `ba ckend/mullvad/` (gitignored)
+-   Never commit VPN cred entials or private keys
+-   The `*.conf` and `key.txt` patterns are already in .git ignore
 
 ### Generating Secrets
 
@@ -340,12 +341,13 @@ openss l rand - base64 32
 openssl rand -hex 32
 ```
 
-### Network 
-Sec  urity
+### Network
 
-- Lidify is designed for self-hosted LAN use
-- For exte  rnal access, use a reverse proxy with HTTPS
-- C o nfigure `ALLOWED_ORIGINS` for your domain
+Sec urity
+
+-   Lidify is designed for self-hosted LAN use
+-   For exte rnal access, use a reverse proxy with HTTPS
+-   C o nfigure `ALLOWED_ORIGINS` for your domain
 
 ---
 
@@ -355,12 +357,12 @@ Lidify works beautifully on its own, but it becomes even more powerful when conn
 
 ### Lidarr
 
-Connect Lidify to your Lidarr instance to request and downloa d  new music directly from the app.
+Connect Lidify to your Lidarr instance to request and downloa d new music directly from the app.
 
-**What you   get:**
+**What you get:**
 
 -   Browse artists and albums you don't own
--     Request downloads with a single click
+-       Request downloads with a single click
 -   Discover Weekly playlists that automatically download new recommendations
 -   Automatic library sync when Lidarr finishes importing
 
@@ -666,12 +668,6 @@ Lidify wouldn't be possible without these services and projects:
 -   [Fanart.tv](https://fanart.tv/) - Artist images and artwork
 -   [Lidarr](https://lidarr.audio/) - Music collection management
 -   [Audiobookshelf](https://www.audiobookshelf.org/) - Audiobook and podcast server
--   [Soulseek](https://www.slsknet.org/) - Peer-to-peer music sharing network
-
-### AI Development Tools
-
--   [Anthropic Claude](https://www.anthropic.com/) - AI pair programming via [OpenCode](https://github.com/sst/opencode) + [GitHub Copilot](https://github.com/features/copilot)
--   [Qwen 3B](https://huggingface.co/Qwen) - Local AI assistance via [Roo Code](https://roocode.com/)
 
 ---
 
@@ -686,4 +682,3 @@ If you encounter issues or have questions:
 ---
 
 _Built with love for the self-hosted community._
-

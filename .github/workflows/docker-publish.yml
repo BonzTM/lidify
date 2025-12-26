@@ -101,10 +101,6 @@ jobs:
 
                       Then open http://localhost:3030 and create your account!
 
-                      ## Android App
-
-                      Download the APK below and install on your device.
-
                       ## Documentation
 
                       See the [README](https://github.com/${{ github.repository }}#readme) for full documentation.
