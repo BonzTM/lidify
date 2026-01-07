@@ -276,6 +276,34 @@ Lidify will begin scanning your music library automatically. Depending on the si
 
 ---
 
+## Release Channels
+
+Lidify offers two release channels to match your stability preferences:
+
+### 🟢 Stable (Recommended)
+
+Production-ready releases. Updated when new stable versions are released.
+
+```bash
+docker pull chevron7locked/lidify:latest
+# or specific version
+docker pull chevron7locked/lidify:v1.2.0
+```
+
+### 🔴 Nightly (Development)
+
+Latest development build. Built on every push to main.
+
+⚠️ **Not recommended for production** - may be unstable or broken.
+
+```bash
+docker pull chevron7locked/lidify:nightly
+```
+
+**For contributors:** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for information on submitting pull requests and contributing to Lidify.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -287,8 +315,7 @@ The unified Lidify container handles most configuration automatically. Here are 
 | `SESSION_SECRET`      | Auto-generated                     | Session encryption key (recommended to set for persistence across restarts) |
 | `TZ`                  | `UTC`                              | Timezone for the container                                                  |
 | `LIDIFY_CALLBACK_URL` | `http://host.docker.internal:3030` | URL for Lidarr webhook callbacks (see [Lidarr integration](#lidarr))        |
-| `NUM_WORKERS`         | Auto-generated (50% of CPU Cores)  | Limit the amount of workers being used in Auto Analysis.                    |
-
+| `NUM_WORKERS`         | `2`                                | Number of parallel workers for audio analysis                               |
 
 The music library path is configured via Docker volume mount (`-v /path/to/music:/music`).
 
@@ -314,42 +341,40 @@ ALLOWED_ORIGINS=http://localhost:3030,https://lidify.yourdomain.com
 
 Lidify uses several sensitive environment variables. Never commit your `.env` file.
 
-| Variable                  | Purpose                        | Required           |
-| ------------------------- | ------------------------------ | ------------------ |
-| `SESSION_SECRET`          | Session encryption (32+ chars) | Yes                |
-| `SETTINGS_ENCRYPTION_KEY` | Encrypts stored credentials    | Recommended        |
-| `SOULSEEK_USERNAME`       | Soulseek login                 | If u sing Soulseek |
-| `SOULSEEK_PASSWORD`-      | Soulseek password -            | If using S-oulseek |
-| `LIDARR_AP I_KEY`         | Lidarr integration             | If using L idarr   |
-| `OPENAI_API_KEY`          | AI features                    | Optional           |
-| `LASTFM_API_KEY `         | Artist recommendations         | Optional           |
-| `FANART_API_KEY`          | Artist images                  | Optional           |
+| Variable                  | Purpose                        | Required          |
+| ------------------------- | ------------------------------ | ----------------- |
+| `SESSION_SECRET`          | Session encryption (32+ chars) | Yes               |
+| `SETTINGS_ENCRYPTION_KEY` | Encrypts stored credentials    | Recommended       |
+| `SOULSEEK_USERNAME`       | Soulseek login                 | If using Soulseek |
+| `SOULSEEK_PASSWORD`       | Soulseek password              | If using Soulseek |
+| `LIDARR_API_KEY`          | Lidarr integration             | If using Lidarr   |
+| `OPENAI_API_KEY`          | AI features                    | Optional          |
+| `LASTFM_API_KEY`          | Artist recommendations         | Optional          |
+| `FANART_API_KEY`          | Artist images                  | Optional          |
 
-### VPN Configurati on (Optional)
+### VPN Configuration (Optional)
 
 If using Mullvad VPN for Soulseek:
 
--   Place Wi reGuard config in `ba ckend/mullvad/` (gitignored)
--   Never commit VPN cred entials or private keys
--   The `*.conf` and `key.txt` patterns are already in .git ignore
+-   Place WireGuard config in `backend/mullvad/` (gitignored)
+-   Never commit VPN credentials or private keys
+-   The `*.conf` and `key.txt` patterns are already in .gitignore
 
 ### Generating Secrets
 
-```bas h
+```bash
 # Generate a secure session secret
-openss l rand - base64 32
+openssl rand -base64 32
 
 # Generate encryption key
 openssl rand -hex 32
 ```
 
-### Network
-
-Sec urity
+### Network Security
 
 -   Lidify is designed for self-hosted LAN use
--   For exte rnal access, use a reverse proxy with HTTPS
--   C o nfigure `ALLOWED_ORIGINS` for your domain
+-   For external access, use a reverse proxy with HTTPS
+-   Configure `ALLOWED_ORIGINS` for your domain
 
 ---
 
@@ -359,12 +384,12 @@ Lidify works beautifully on its own, but it becomes even more powerful when conn
 
 ### Lidarr
 
-Connect Lidify to your Lidarr instance to request and downloa d new music directly from the app.
+Connect Lidify to your Lidarr instance to request and download new music directly from the app.
 
 **What you get:**
 
 -   Browse artists and albums you don't own
--       Request downloads with a single click
+-               Request downloads with a single click
 -   Discover Weekly playlists that automatically download new recommendations
 -   Automatic library sync when Lidarr finishes importing
 

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { logger } from "../utils/logger";
 import { lastFmService } from "../services/lastfm";
 import { musicBrainzService } from "../services/musicbrainz";
 import { fanartService } from "../services/fanart";
@@ -17,7 +18,7 @@ router.get("/preview/:artistName/:trackTitle", async (req, res) => {
         const decodedArtist = decodeURIComponent(artistName);
         const decodedTrack = decodeURIComponent(trackTitle);
 
-        console.log(
+        logger.debug(
             `Getting preview for "${decodedTrack}" by ${decodedArtist}`
         );
 
@@ -32,7 +33,7 @@ router.get("/preview/:artistName/:trackTitle", async (req, res) => {
             res.status(404).json({ error: "Preview not found" });
         }
     } catch (error: any) {
-        console.error("Preview fetch error:", error);
+        logger.error("Preview fetch error:", error);
         res.status(500).json({
             error: "Failed to fetch preview",
             message: error.message,
@@ -50,7 +51,7 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
         try {
             const cached = await redisClient.get(cacheKey);
             if (cached) {
-                console.log(`[Discovery] Cache hit for artist: ${nameOrMbid}`);
+                logger.debug(`[Discovery] Cache hit for artist: ${nameOrMbid}`);
                 return res.json(JSON.parse(cached));
             }
         } catch (err) {
@@ -108,7 +109,7 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                 lowerBio.includes("multiple artists")
             ) {
                 // This is a disambiguation page - don't show it
-                console.log(
+                logger.debug(
                     `  Filtered out disambiguation biography for ${artistName}`
                 );
                 bio = null;
@@ -125,7 +126,7 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                     10
                 );
             } catch (error) {
-                console.log(`Failed to get top tracks for ${artistName}`);
+                logger.debug(`Failed to get top tracks for ${artistName}`);
             }
         }
 
@@ -136,9 +137,9 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
         if (mbid) {
             try {
                 image = await fanartService.getArtistImage(mbid);
-                console.log(`Fanart.tv image for ${artistName}`);
+                logger.debug(`Fanart.tv image for ${artistName}`);
             } catch (error) {
-                console.log(
+                logger.debug(
                     `✗ Failed to get Fanart.tv image for ${artistName}`
                 );
             }
@@ -149,10 +150,10 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
             try {
                 image = await deezerService.getArtistImage(artistName);
                 if (image) {
-                    console.log(`Deezer image for ${artistName}`);
+                    logger.debug(`Deezer image for ${artistName}`);
                 }
             } catch (error) {
-                console.log(`✗ Failed to get Deezer image for ${artistName}`);
+                logger.debug(` Failed to get Deezer image for ${artistName}`);
             }
         }
 
@@ -165,9 +166,9 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                 !lastFmImage.includes("2a96cbd8b46e442fc41c2b86b821562f")
             ) {
                 image = lastFmImage;
-                console.log(`Last.fm image for ${artistName}`);
+                logger.debug(`Last.fm image for ${artistName}`);
             } else {
-                console.log(`✗ Last.fm returned placeholder for ${artistName}`);
+                logger.debug(` Last.fm returned placeholder for ${artistName}`);
             }
         }
 
@@ -265,7 +266,7 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                     return 0;
                 });
             } catch (error) {
-                console.error(
+                logger.error(
                     `Failed to get discography for ${artistName}:`,
                     error
                 );
@@ -355,14 +356,14 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                 DISCOVERY_CACHE_TTL,
                 JSON.stringify(response)
             );
-            console.log(`[Discovery] Cached artist: ${artistName}`);
+            logger.debug(`[Discovery] Cached artist: ${artistName}`);
         } catch (err) {
             // Redis errors are non-critical
         }
 
         res.json(response);
     } catch (error: any) {
-        console.error("Artist discovery error:", error);
+        logger.error("Artist discovery error:", error);
         res.status(500).json({
             error: "Failed to fetch artist details",
             message: error.message,
@@ -380,7 +381,7 @@ router.get("/album/:mbid", async (req, res) => {
         try {
             const cached = await redisClient.get(cacheKey);
             if (cached) {
-                console.log(`[Discovery] Cache hit for album: ${mbid}`);
+                logger.debug(`[Discovery] Cache hit for album: ${mbid}`);
                 return res.json(JSON.parse(cached));
             }
         } catch (err) {
@@ -397,7 +398,7 @@ router.get("/album/:mbid", async (req, res) => {
         } catch (error: any) {
             // If 404, try as a release instead
             if (error.response?.status === 404) {
-                console.log(
+                logger.debug(
                     `${mbid} is not a release-group, trying as release...`
                 );
                 release = await musicBrainzService.getRelease(mbid);
@@ -410,7 +411,7 @@ router.get("/album/:mbid", async (req, res) => {
                             releaseGroupId
                         );
                     } catch (err) {
-                        console.error(
+                        logger.error(
                             `Failed to get release-group ${releaseGroupId}`
                         );
                     }
@@ -439,7 +440,7 @@ router.get("/album/:mbid", async (req, res) => {
                 albumTitle
             );
         } catch (error) {
-            console.log(`Failed to get Last.fm info for ${albumTitle}`);
+            logger.debug(`Failed to get Last.fm info for ${albumTitle}`);
         }
 
         // Get tracks - if we have release, use it directly; otherwise get first release from group
@@ -454,7 +455,7 @@ router.get("/album/:mbid", async (req, res) => {
                 );
                 tracks = releaseDetails.media?.[0]?.tracks || [];
             } catch (error) {
-                console.error(
+                logger.error(
                     `Failed to get tracks for release ${firstRelease.id}`
                 );
             }
@@ -472,14 +473,14 @@ router.get("/album/:mbid", async (req, res) => {
             const response = await fetch(coverArtUrl, { method: "HEAD" });
             if (response.ok) {
                 coverUrl = coverArtUrl;
-                console.log(`Cover Art Archive has cover for ${albumTitle}`);
+                logger.debug(`Cover Art Archive has cover for ${albumTitle}`);
             } else {
-                console.log(
+                logger.debug(
                     `✗ Cover Art Archive 404 for ${albumTitle}, trying Deezer...`
                 );
             }
         } catch (error) {
-            console.log(
+            logger.debug(
                 `✗ Cover Art Archive check failed for ${albumTitle}, trying Deezer...`
             );
         }
@@ -493,13 +494,13 @@ router.get("/album/:mbid", async (req, res) => {
                 );
                 if (deezerCover) {
                     coverUrl = deezerCover;
-                    console.log(`Deezer has cover for ${albumTitle}`);
+                    logger.debug(`Deezer has cover for ${albumTitle}`);
                 } else {
                     // Final fallback to Cover Art Archive URL (might 404, but better than nothing)
                     coverUrl = coverArtUrl;
                 }
             } catch (error) {
-                console.log(`✗ Deezer lookup failed for ${albumTitle}`);
+                logger.debug(` Deezer lookup failed for ${albumTitle}`);
                 // Final fallback to Cover Art Archive URL
                 coverUrl = coverArtUrl;
             }
@@ -548,14 +549,14 @@ router.get("/album/:mbid", async (req, res) => {
                 DISCOVERY_CACHE_TTL,
                 JSON.stringify(response)
             );
-            console.log(`[Discovery] Cached album: ${albumTitle}`);
+            logger.debug(`[Discovery] Cached album: ${albumTitle}`);
         } catch (err) {
             // Redis errors are non-critical
         }
 
         res.json(response);
     } catch (error: any) {
-        console.error("Album discovery error:", error);
+        logger.error("Album discovery error:", error);
         res.status(500).json({
             error: "Failed to fetch album details",
             message: error.message,
