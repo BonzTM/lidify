@@ -862,20 +862,40 @@ class SpotifyImportService {
             const spotifyAlbum = m.spotifyTrack.album;
             const spotifyAlbumId = m.spotifyTrack.albumId;
             const spotifyArtist = m.spotifyTrack.artist;
+            const spotifyTrackId = m.spotifyTrack.spotifyId;
+            const trackTitle = m.spotifyTrack.title;
 
-            // Try to find album info - first by spotifyAlbumId, then by artist name match
-            let albumToDownload = spotifyAlbumId
-                ? preview.albumsToDownload.find(
-                      (a) => a.spotifyAlbumId === spotifyAlbumId
-                  )
-                : undefined;
+            // Try to find album info using multiple strategies
+            let albumToDownload: AlbumToDownload | undefined;
 
-            // Fallback: If no match by ID (e.g., "Unknown Album" tracks), try matching by artist
-            // This helps when Spotify doesn't return album info but we resolved it via MusicBrainz
-            if (!albumToDownload && spotifyArtist) {
-                const normalizedArtist = spotifyArtist.toLowerCase();
+            // Strategy 1: Match by Spotify album ID (most reliable)
+            if (spotifyAlbumId) {
                 albumToDownload = preview.albumsToDownload.find(
-                    (a) => a.artistName.toLowerCase() === normalizedArtist
+                    (a) => a.spotifyAlbumId === spotifyAlbumId
+                );
+            }
+
+            // Strategy 2: Find album that contains this specific track in tracksNeeded
+            // This is the most accurate fallback for "Unknown Album" tracks
+            if (!albumToDownload) {
+                albumToDownload = preview.albumsToDownload.find((a) =>
+                    a.tracksNeeded.some(
+                        (t) =>
+                            t.spotifyId === spotifyTrackId ||
+                            (t.title.toLowerCase() === trackTitle.toLowerCase() &&
+                                t.artist.toLowerCase() === spotifyArtist.toLowerCase())
+                    )
+                );
+            }
+
+            // Strategy 3: Match by artist + album name similarity (for edge cases)
+            if (!albumToDownload && spotifyArtist && spotifyAlbum && spotifyAlbum !== "Unknown Album") {
+                const normalizedArtist = spotifyArtist.toLowerCase();
+                const normalizedAlbum = spotifyAlbum.toLowerCase();
+                albumToDownload = preview.albumsToDownload.find(
+                    (a) =>
+                        a.artistName.toLowerCase() === normalizedArtist &&
+                        a.albumName.toLowerCase().includes(normalizedAlbum.substring(0, 10))
                 );
             }
 
@@ -886,7 +906,7 @@ class SpotifyImportService {
 
             return {
                 artist: spotifyArtist,
-                title: m.spotifyTrack.title,
+                title: trackTitle,
                 album: albumForDisplay,
                 albumMbid: albumToDownload?.albumMbid || null,
                 artistMbid: albumToDownload?.artistMbid || null,
