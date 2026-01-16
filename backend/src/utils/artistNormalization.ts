@@ -236,7 +236,6 @@ export function extractPrimaryArtist(artistName: string): string {
         / feat\.? /i, // "feat." or "feat "
         / ft\.? /i, // "ft." or "ft "
         / featuring /i,
-        / x /i, // "Artist x Chromeo" style collaborations
     ];
 
     for (const pattern of definiteCollaborationPatterns) {
@@ -252,6 +251,7 @@ export function extractPrimaryArtist(artistName: string): string {
         { pattern: / \& /, name: "&" }, // "Earth, Wind & Fire" shouldn't split
         { pattern: / and /i, name: "and" }, // "The Naked and Famous" shouldn't split
         { pattern: / with /i, name: "with" },
+        { pattern: / x /i, name: "x" }, // "Artist x Chromeo" - applies same heuristics as & and "and"
         { pattern: /, /, name: "," },
     ];
 
