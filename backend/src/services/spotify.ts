@@ -140,6 +140,242 @@ class SpotifyService {
     }
 
     /**
+     * Extract track data from Apollo/GraphQL cache in page HTML
+     * Spotify sometimes stores data in Apollo cache format instead of __NEXT_DATA__
+     */
+    private extractTracksFromApolloCache(html: string): Array<{ trackId: string; albumName: string; albumId: string }> {
+        const tracks: Array<{ trackId: string; albumName: string; albumId: string }> = [];
+
+        try {
+            // Look for Apollo cache script tags
+            const apolloPatterns = [
+                /<script[^>]*>window\.__APOLLO_STATE__\s*=\s*({[\s\S]*?})<\/script>/,
+                /<script[^>]*>self\.__next_f\.push\(\[1,"[\d]+:({[\s\S]*?})"\]\)<\/script>/,
+                /window\["__APOLLO_STATE__"\]\s*=\s*({[\s\S]*?});/,
+            ];
+
+            for (const pattern of apolloPatterns) {
+                const match = html.match(pattern);
+                if (match) {
+                    logger.debug("Spotify Scraper: Found Apollo cache pattern");
+                    try {
+                        const apolloData = JSON.parse(match[1]);
+
+                        // Apollo cache stores entities by their cache key (e.g., "Track:spotify:track:xxx")
+                        for (const [key, value] of Object.entries(apolloData)) {
+                            if (key.startsWith("Track:") && typeof value === "object" && value !== null) {
+                                const trackData = value as Record<string, any>;
+                                const trackId = key.split(":").pop() || trackData.id;
+                                const albumRef = trackData.album || trackData.albumOfTrack;
+
+                                // Album might be a reference to another cache entry
+                                let albumName: string | undefined;
+                                let albumId: string | undefined;
+
+                                if (typeof albumRef === "string" && albumRef.startsWith("Album:")) {
+                                    const albumKey = albumRef;
+                                    const albumData = apolloData[albumKey] as Record<string, any> | undefined;
+                                    if (albumData) {
+                                        albumName = albumData.name;
+                                        albumId = albumKey.split(":").pop();
+                                    }
+                                } else if (typeof albumRef === "object" && albumRef !== null) {
+                                    albumName = albumRef.name;
+                                    albumId = albumRef.uri?.split(":")[2] || albumRef.id;
+                                }
+
+                                if (trackId && albumName && albumName !== "Unknown Album") {
+                                    tracks.push({ trackId, albumName, albumId: albumId || "" });
+                                }
+                            }
+                        }
+
+                        if (tracks.length > 0) {
+                            logger.debug(`Spotify Scraper: Extracted ${tracks.length} tracks from Apollo cache`);
+                            return tracks;
+                        }
+                    } catch (parseError) {
+                        logger.debug("Spotify Scraper: Failed to parse Apollo cache JSON");
+                    }
+                }
+            }
+        } catch (error: any) {
+            logger.debug(`Spotify Scraper: Apollo cache extraction failed: ${error.message}`);
+        }
+
+        return tracks;
+    }
+
+    /**
+     * Scrape the full Spotify playlist page HTML to extract album data
+     * This is used as a fallback when the API returns "Unknown Album"
+     *
+     * Tries multiple extraction methods in order of reliability:
+     * 1. __NEXT_DATA__ JSON with multiple path fallbacks
+     * 2. Apollo/GraphQL cache
+     * 3. HTML regex parsing
+     */
+    private async scrapePlaylistPageForAlbums(playlistId: string): Promise<Map<string, { album: string; albumId: string }>> {
+        const albumMap = new Map<string, { album: string; albumId: string }>();
+
+        try {
+            logger.debug(`Spotify Scraper: Starting album scrape for playlist ${playlistId}`);
+
+            const response = await axios.get(
+                `https://open.spotify.com/playlist/${playlistId}`,
+                {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                    timeout: 15000,
+                }
+            );
+
+            const html = response.data;
+            logger.debug(`Spotify Scraper: Received HTML response (${html.length} bytes)`);
+
+            // Method 1: Try to extract from __NEXT_DATA__ JSON with multiple path fallbacks
+            const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/);
+            if (nextDataMatch) {
+                logger.debug("Spotify Scraper: Found __NEXT_DATA__ script tag");
+                try {
+                    const data = JSON.parse(nextDataMatch[1]);
+
+                    // Log available data structure for debugging
+                    const propsKeys = Object.keys(data?.props?.pageProps || {});
+                    logger.debug(`Spotify Scraper: pageProps keys: [${propsKeys.join(", ")}]`);
+
+                    const stateDataKeys = Object.keys(data?.props?.pageProps?.state?.data || {});
+                    logger.debug(`Spotify Scraper: state.data keys: [${stateDataKeys.join(", ")}]`);
+
+                    // Try multiple JSON paths - Spotify changes these frequently
+                    const jsonPaths = [
+                        { path: "entity.trackList", getter: () => data?.props?.pageProps?.state?.data?.entity?.trackList },
+                        { path: "entity.tracks.items", getter: () => data?.props?.pageProps?.state?.data?.entity?.tracks?.items },
+                        { path: "playlistV2.content.items", getter: () => data?.props?.pageProps?.state?.data?.playlistV2?.content?.items },
+                        { path: "playlist.tracks.items", getter: () => data?.props?.pageProps?.state?.data?.playlist?.tracks?.items },
+                        { path: "playlistState.playlist.tracks.items", getter: () => data?.props?.pageProps?.playlistState?.playlist?.tracks?.items },
+                        { path: "pageProps.playlist.tracks.items", getter: () => data?.props?.pageProps?.playlist?.tracks?.items },
+                    ];
+
+                    let trackItems: any[] = [];
+                    let successfulPath: string | null = null;
+
+                    for (const { path, getter } of jsonPaths) {
+                        try {
+                            const items = getter();
+                            if (Array.isArray(items) && items.length > 0) {
+                                trackItems = items;
+                                successfulPath = path;
+                                logger.debug(`Spotify Scraper: Found ${items.length} items at path: ${path}`);
+                                break;
+                            }
+                        } catch {
+                            // Path doesn't exist, continue to next
+                        }
+                    }
+
+                    if (trackItems.length === 0) {
+                        logger.debug("Spotify Scraper: No track items found in any __NEXT_DATA__ path");
+                    } else {
+                        logger.debug(`Spotify Scraper: Processing ${trackItems.length} track items from ${successfulPath}`);
+                    }
+
+                    for (const item of trackItems) {
+                        const track = item.track || item.itemV2?.data || item;
+
+                        // Extract track ID from multiple possible locations
+                        const trackId = track.uri?.split(":")[2]
+                            || track.id
+                            || item.uid
+                            || item.itemV2?.data?.uri?.split(":")[2];
+
+                        // Extract album name from multiple possible locations
+                        const albumName = track.album?.name
+                            || track.albumOfTrack?.name
+                            || item.itemV2?.data?.albumOfTrack?.name;
+
+                        // Extract album ID from multiple possible locations
+                        const albumId = track.album?.uri?.split(":")[2]
+                            || track.album?.id
+                            || track.albumOfTrack?.uri?.split(":")[2]
+                            || item.itemV2?.data?.albumOfTrack?.uri?.split(":")[2];
+
+                        if (trackId && albumName && albumName !== "Unknown Album") {
+                            albumMap.set(trackId, { album: albumName, albumId: albumId || "" });
+                        }
+                    }
+
+                    if (albumMap.size > 0) {
+                        logger.debug(`Spotify Scraper: Extracted ${albumMap.size} album entries from __NEXT_DATA__ (${successfulPath})`);
+                        return albumMap;
+                    } else {
+                        logger.debug("Spotify Scraper: __NEXT_DATA__ parsing yielded no valid album data");
+                    }
+                } catch (e: any) {
+                    logger.debug(`Spotify Scraper: Failed to parse __NEXT_DATA__: ${e.message}`);
+                }
+            } else {
+                logger.debug("Spotify Scraper: __NEXT_DATA__ script tag not found in HTML");
+            }
+
+            // Method 2: Try Apollo/GraphQL cache extraction
+            logger.debug("Spotify Scraper: Attempting Apollo cache extraction...");
+            const apolloTracks = this.extractTracksFromApolloCache(html);
+            if (apolloTracks.length > 0) {
+                for (const { trackId, albumName, albumId } of apolloTracks) {
+                    albumMap.set(trackId, { album: albumName, albumId });
+                }
+                logger.debug(`Spotify Scraper: Extracted ${albumMap.size} album entries from Apollo cache`);
+                return albumMap;
+            }
+
+            // Method 3: Fallback to HTML regex parsing
+            logger.debug("Spotify Scraper: Attempting HTML regex parsing...");
+            const rowPattern = /<div[^>]*role="row"[^>]*aria-rowindex="(\d+)"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*role="row"|<div[^>]*data-testid="bottom-sentinel")/g;
+            let rowMatch;
+            let rowCount = 0;
+
+            while ((rowMatch = rowPattern.exec(html)) !== null) {
+                rowCount++;
+                const rowContent = rowMatch[2];
+
+                // Extract track ID from internal-track-link
+                const trackLinkMatch = rowContent.match(/href="\/track\/([a-zA-Z0-9]+)"/);
+                // Extract album info from album link (aria-colindex="3" contains album)
+                const albumLinkMatch = rowContent.match(/href="\/album\/([a-zA-Z0-9]+)"[^>]*>([^<]+)</);
+
+                if (trackLinkMatch && albumLinkMatch) {
+                    const trackId = trackLinkMatch[1];
+                    const albumId = albumLinkMatch[1];
+                    const albumName = albumLinkMatch[2].trim();
+
+                    if (albumName && albumName !== "Unknown Album") {
+                        albumMap.set(trackId, { album: albumName, albumId });
+                    }
+                }
+            }
+
+            if (rowCount > 0) {
+                logger.debug(`Spotify Scraper: Parsed ${rowCount} HTML rows, extracted ${albumMap.size} album entries`);
+            } else {
+                logger.debug("Spotify Scraper: No HTML rows matched the regex pattern");
+            }
+
+        } catch (error: any) {
+            logger.debug(`Spotify Scraper: Page scraping failed: ${error.message}`);
+        }
+
+        if (albumMap.size === 0) {
+            logger.debug("Spotify Scraper: All extraction methods failed - no album data recovered");
+        }
+
+        return albumMap;
+    }
+
+    /**
      * Fetch playlist via anonymous token
      */
     private async fetchPlaylistViaAnonymousApi(playlistId: string): Promise<SpotifyPlaylist | null> {
@@ -167,8 +403,9 @@ class SpotifyService {
 
             const playlist = playlistResponse.data;
             logger.debug(`Spotify: Fetched playlist "${playlist.name}" with ${playlist.tracks?.items?.length || 0} tracks`);
-            
+
             const tracks: SpotifyTrack[] = [];
+            let unknownAlbumCount = 0;
 
             for (const item of playlist.tracks?.items || []) {
                 const track = item.track;
@@ -179,14 +416,8 @@ class SpotifyService {
                 // Get album name, handling null, undefined, and empty strings
                 const albumName = track.album?.name?.trim() || "Unknown Album";
 
-                // Debug log for tracks with Unknown Album
                 if (albumName === "Unknown Album") {
-                    logger.debug(`Spotify: Track "${track.name}" has no album data:`, JSON.stringify({
-                        trackId: track.id,
-                        album: track.album,
-                        hasAlbum: !!track.album,
-                        albumName: track.album?.name,
-                    }));
+                    unknownAlbumCount++;
                 }
 
                 tracks.push({
@@ -204,6 +435,26 @@ class SpotifyService {
                 });
             }
 
+            // If we have tracks with Unknown Album, try to fill them in via page scraping
+            if (unknownAlbumCount > 0) {
+                logger.debug(`Spotify: ${unknownAlbumCount} tracks have Unknown Album, attempting page scrape...`);
+                const scrapedAlbums = await this.scrapePlaylistPageForAlbums(playlistId);
+
+                if (scrapedAlbums.size > 0) {
+                    let enrichedCount = 0;
+                    for (const track of tracks) {
+                        if (track.album === "Unknown Album" && scrapedAlbums.has(track.spotifyId)) {
+                            const albumData = scrapedAlbums.get(track.spotifyId)!;
+                            track.album = albumData.album;
+                            track.albumId = albumData.albumId;
+                            enrichedCount++;
+                            logger.debug(`Spotify: Enriched "${track.title}" with album "${albumData.album}"`);
+                        }
+                    }
+                    logger.debug(`Spotify: Enriched ${enrichedCount}/${unknownAlbumCount} tracks with scraped album data`);
+                }
+            }
+
             logger.debug(`Spotify: Processed ${tracks.length} tracks`);
 
             return {
@@ -218,7 +469,7 @@ class SpotifyService {
             };
         } catch (error: any) {
             logger.error("Spotify API error:", error.response?.status, error.response?.data || error.message);
-            
+
             // Fallback to embed HTML parsing
             return await this.fetchPlaylistViaEmbedHtml(playlistId);
         }
@@ -299,6 +550,29 @@ class SpotifyService {
                     previewUrl: null,
                     coverUrl: trackData.album?.images?.[0]?.url || trackData.images?.[0]?.url || null,
                 });
+            }
+
+            // Count tracks with Unknown Album
+            const unknownAlbumCount = tracks.filter(t => t.album === "Unknown Album").length;
+
+            // If we have tracks with Unknown Album, try to fill them in via page scraping
+            if (unknownAlbumCount > 0) {
+                logger.debug(`Spotify Embed: ${unknownAlbumCount} tracks have Unknown Album, attempting page scrape...`);
+                const scrapedAlbums = await this.scrapePlaylistPageForAlbums(playlistId);
+
+                if (scrapedAlbums.size > 0) {
+                    let enrichedCount = 0;
+                    for (const track of tracks) {
+                        if (track.album === "Unknown Album" && scrapedAlbums.has(track.spotifyId)) {
+                            const albumData = scrapedAlbums.get(track.spotifyId)!;
+                            track.album = albumData.album;
+                            track.albumId = albumData.albumId;
+                            enrichedCount++;
+                            logger.debug(`Spotify Embed: Enriched "${track.title}" with album "${albumData.album}"`);
+                        }
+                    }
+                    logger.debug(`Spotify Embed: Enriched ${enrichedCount}/${unknownAlbumCount} tracks with scraped album data`);
+                }
             }
 
             return {
