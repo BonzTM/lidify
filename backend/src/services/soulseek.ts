@@ -80,6 +80,11 @@ class SoulseekService {
     private totalSuccessfulSearches = 0;
     private readonly MAX_CONSECUTIVE_EMPTY = 3; // After 3 empty searches, force reconnect
 
+    constructor() {
+        // Start periodic cleanup of failedUsers (every 5 minutes)
+        setInterval(() => this.cleanupFailedUsers(), 5 * 60 * 1000);
+    }
+
     /**
      * Normalize track title for better search results
      * Extracts main song name by removing live performance details, remasters, etc.
@@ -550,6 +555,24 @@ class SoulseekService {
         }
 
         return record.failures >= this.FAILURE_THRESHOLD;
+    }
+
+    /**
+     * Periodically clean up expired entries from failedUsers Map
+     * Called every 5 minutes to prevent unbounded memory growth
+     */
+    private cleanupFailedUsers(): void {
+        const now = Date.now();
+        let cleaned = 0;
+        for (const [username, record] of this.failedUsers.entries()) {
+            if (now - record.lastFailure.getTime() > this.FAILURE_WINDOW) {
+                this.failedUsers.delete(username);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            sessionLog("SOULSEEK", `Cleaned up ${cleaned} expired user failure records`);
+        }
     }
 
     /**
