@@ -1365,6 +1365,8 @@ class SpotifyImportService {
                 job.updatedAt = new Date();
                 await saveImportJob(job);
                 jobLogger?.logJobFailed(error.message);
+                // Clean up job logger to prevent memory leak
+                jobLoggers.delete(job.id);
             }
         );
 
@@ -1634,6 +1636,8 @@ class SpotifyImportService {
             job.error = message;
             job.updatedAt = new Date();
             await saveImportJob(job);
+            // Clean up job logger to prevent memory leak
+            jobLoggers.delete(job.id);
             return;
         }
 
@@ -2338,6 +2342,9 @@ class SpotifyImportService {
         } catch (notifError) {
             logger?.error(`Failed to send import notification: ${notifError}`);
         }
+
+        // Clean up job logger to prevent memory leak
+        jobLoggers.delete(job.id);
     }
 
     /**
