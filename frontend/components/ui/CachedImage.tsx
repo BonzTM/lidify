@@ -6,6 +6,7 @@ import { memo } from "react";
 
 interface CachedImageProps extends Omit<ImageProps, 'src'> {
     src: string | null | undefined;
+    fill?: boolean;
 }
 
 /**
