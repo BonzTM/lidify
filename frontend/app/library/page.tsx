@@ -59,8 +59,10 @@ export default function LibraryPage() {
             sortBy,
             limit: itemsPerPage,
             page: currentPage,
-            enabled: activeTab === "artists",
         },
+        {
+            enabled: activeTab === "artists",
+        }
     );
 
     const albumsQuery = useLibraryAlbumsQuery(
@@ -69,8 +71,10 @@ export default function LibraryPage() {
             sortBy,
             limit: itemsPerPage,
             page: currentPage,
-            enabled: activeTab === "albums",
         },
+        {
+            enabled: activeTab === "albums",
+        }
     );
 
     const tracksQuery = useLibraryTracksQuery(
@@ -78,8 +82,10 @@ export default function LibraryPage() {
             sortBy,
             limit: itemsPerPage,
             page: currentPage,
-            enabled: activeTab === "tracks",
         },
+        {
+            enabled: activeTab === "tracks",
+        }
     );
 
     // Get data based on active tab
