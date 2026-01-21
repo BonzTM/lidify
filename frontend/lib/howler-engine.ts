@@ -117,7 +117,7 @@ class HowlerEngine {
                 this.howl = preloadedHowl;
 
                 // Set up event handlers for the preloaded instance
-                this.setupHowlEventHandlers(autoplay);
+                this.setupHowlEventHandlers();
 
                 // Set correct volume
                 const targetVolume = this.state.isMuted ? 0 : this.state.volume;
@@ -650,7 +650,7 @@ class HowlerEngine {
      * Set up event handlers on a Howl instance
      * Used to attach handlers to preloaded instances after ownership transfer
      */
-    private setupHowlEventHandlers(autoplay: boolean): void {
+    private setupHowlEventHandlers(): void {
         if (!this.howl) return;
 
         this.howl.on("play", () => {
@@ -754,7 +754,7 @@ class HowlerEngine {
      */
     destroy(): void {
         this.cleanup();
-        this.cancelPreload();
+        // Note: cancelPreload() is already called by cleanup()
         this.isLoading = false;
         this.eventListeners.clear();
         // Ensure cleanup timeout is cleared
