@@ -83,6 +83,33 @@ class HowlerEngine {
     }
 
     /**
+     * Initialize engine with saved preferences
+     * Call this before first playback
+     */
+    initializeFromStorage(): void {
+        if (typeof window === 'undefined') return;
+
+        try {
+            const savedVolume = localStorage.getItem('lidify_volume');
+            const savedMuted = localStorage.getItem('lidify_muted');
+
+            if (savedVolume) {
+                this.state.volume = parseFloat(savedVolume);
+            }
+            if (savedMuted === 'true') {
+                this.state.isMuted = true;
+            }
+
+            // Apply to global Howler if available
+            if (typeof Howler !== 'undefined') {
+                Howler.volume(this.state.isMuted ? 0 : this.state.volume);
+            }
+        } catch (error) {
+            console.error('[HowlerEngine] Failed to initialize from storage:', error);
+        }
+    }
+
+    /**
      * Load and optionally play a new audio source
      * @param src - Audio URL
      * @param autoplay - Whether to auto-play after loading

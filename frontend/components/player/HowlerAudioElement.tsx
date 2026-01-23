@@ -200,6 +200,11 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         }
     }, [isPlaying, isBuffering]);
 
+    // Initialize Howler engine from saved preferences on mount
+    useEffect(() => {
+        howlerEngine.initializeFromStorage();
+    }, []);
+
     // Reset duration when nothing is playing
     useEffect(() => {
         if (!currentTrack && !currentAudiobook && !currentPodcast) {
