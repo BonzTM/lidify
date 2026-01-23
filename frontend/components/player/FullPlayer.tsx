@@ -24,6 +24,9 @@ import {
     AudioWaveform,
     ChevronUp,
     ChevronDown,
+    AlertTriangle,
+    RefreshCw,
+    X,
 } from "lucide-react";
 import { useState, lazy, Suspense } from "react";
 import { toast } from "sonner";
@@ -64,6 +67,8 @@ export function FullPlayer() {
         duration: playbackDuration,
         canSeek,
         downloadProgress,
+        audioError,
+        clearAudioError,
     } = useAudioPlayback();
 
     const {
@@ -301,7 +306,38 @@ export function FullPlayer() {
                 </button>
             )}
 
-            <div className="h-24 bg-black border-t border-white/[0.08]">
+            {/* Error Banner */}
+            {audioError && (
+                <div className="bg-red-500/20 border-t border-red-500/30 px-4 py-1.5 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                        <span className="text-red-200 text-sm truncate">
+                            {audioError}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                            onClick={() => {
+                                clearAudioError();
+                                resume();
+                            }}
+                            className="px-2 py-1 text-xs text-red-200 hover:text-white hover:bg-red-500/30 transition rounded"
+                            aria-label="Retry playback"
+                        >
+                            Retry
+                        </button>
+                        <button
+                            onClick={clearAudioError}
+                            className="p-1 text-red-300 hover:text-white transition rounded"
+                            aria-label="Dismiss error"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <div className={cn("bg-black border-t border-white/[0.08]", audioError ? "h-20" : "h-24")}>
                 {/* Subtle top glow */}
                 <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
                 <div className="flex items-center h-full px-6 gap-6">
@@ -430,7 +466,12 @@ export function FullPlayer() {
 
                             <button
                                 onClick={
-                                    isBuffering
+                                    audioError
+                                        ? () => {
+                                            clearAudioError();
+                                            resume();
+                                        }
+                                        : isBuffering
                                         ? undefined
                                         : isPlaying
                                         ? pause
@@ -438,7 +479,9 @@ export function FullPlayer() {
                                 }
                                 className={cn(
                                     "w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 relative group",
-                                    hasMedia && !isBuffering
+                                    audioError
+                                        ? "bg-red-500 text-white hover:scale-110 hover:bg-red-400"
+                                        : hasMedia && !isBuffering
                                         ? "bg-white text-black hover:scale-110 shadow-lg shadow-white/20 hover:shadow-white/30"
                                         : isBuffering
                                         ? "bg-white/80 text-black"
@@ -446,24 +489,30 @@ export function FullPlayer() {
                                 )}
                                 disabled={!hasMedia || isBuffering}
                                 aria-label={
-                                    isBuffering
+                                    audioError
+                                        ? "Retry playback"
+                                        : isBuffering
                                         ? "Buffering..."
                                         : isPlaying
                                         ? "Pause"
                                         : "Play"
                                 }
                                 title={
-                                    isBuffering
+                                    audioError
+                                        ? "Retry playback"
+                                        : isBuffering
                                         ? "Buffering..."
                                         : isPlaying
                                         ? "Pause"
                                         : "Play"
                                 }
                             >
-                                {hasMedia && !isBuffering && (
+                                {hasMedia && !isBuffering && !audioError && (
                                     <div className="absolute inset-0 rounded-full bg-white blur-md opacity-0 group-hover:opacity-50 transition-opacity duration-200" />
                                 )}
-                                {isBuffering ? (
+                                {audioError ? (
+                                    <RefreshCw className="w-5 h-5 relative z-10" />
+                                ) : isBuffering ? (
                                     <Loader2 className="w-5 h-5 animate-spin relative z-10" />
                                 ) : isPlaying ? (
                                     <Pause className="w-5 h-5 relative z-10" />
