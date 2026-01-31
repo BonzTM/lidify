@@ -33,6 +33,7 @@ import { clampTime } from "@/utils/formatTime";
 import { useState, useRef, useEffect, lazy, Suspense } from "react";
 import { KeyboardShortcutsTooltip } from "./KeyboardShortcutsTooltip";
 import { SeekSlider } from "./SeekSlider";
+import { useFeatures } from "@/lib/features-context";
 
 // Lazy load VibeOverlayEnhanced - only loads when vibe mode is active
 const EnhancedVibeOverlay = lazy(() => import("./VibeOverlayEnhanced").then(mod => ({ default: mod.EnhancedVibeOverlay })));
@@ -72,6 +73,7 @@ export function MiniPlayer() {
     const isMobile = useIsMobile();
     const isTablet = useIsTablet();
     const isMobileOrTablet = isMobile || isTablet;
+    const { vibeEmbeddings, loading: featuresLoading } = useFeatures();
     const [isVibeLoading, setIsVibeLoading] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isDismissed, setIsDismissed] = useState(false);
@@ -409,8 +411,8 @@ export function MiniPlayer() {
                                     role="group"
                                     aria-label="Playback controls"
                                 >
-                                    {/* Vibe button - only for music tracks */}
-                                    {canSkip && (
+                                    {/* Vibe button - only for music tracks when embeddings available */}
+                                    {!featuresLoading && vibeEmbeddings && canSkip && (
                                         <button
                                             onClick={handleVibeToggle}
                                             disabled={isVibeLoading}
@@ -845,32 +847,34 @@ export function MiniPlayer() {
                             )}
                         </button>
 
-                        {/* Vibe Mode Toggle */}
-                        <button
-                            onClick={handleVibeToggle}
-                            disabled={!hasMedia || !canSkip || isVibeLoading}
-                            className={cn(
-                                "rounded p-1.5 transition-colors",
-                                !hasMedia || !canSkip
-                                    ? "text-gray-600 cursor-not-allowed"
-                                    : vibeMode
-                                    ? "text-brand hover:text-brand-hover"
-                                    : "text-gray-400 hover:text-brand"
-                            )}
-                            aria-label="Toggle vibe visualization"
-                            aria-pressed={vibeMode}
-                            title={
-                                vibeMode
-                                    ? "Turn off vibe mode"
-                                    : "Match this vibe - find similar sounding tracks"
-                            }
-                        >
-                            {isVibeLoading ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                                <AudioWaveform className="w-3.5 h-3.5" />
-                            )}
-                        </button>
+                        {/* Vibe Mode Toggle - only when embeddings available */}
+                        {!featuresLoading && vibeEmbeddings && (
+                            <button
+                                onClick={handleVibeToggle}
+                                disabled={!hasMedia || !canSkip || isVibeLoading}
+                                className={cn(
+                                    "rounded p-1.5 transition-colors",
+                                    !hasMedia || !canSkip
+                                        ? "text-gray-600 cursor-not-allowed"
+                                        : vibeMode
+                                        ? "text-brand hover:text-brand-hover"
+                                        : "text-gray-400 hover:text-brand"
+                                )}
+                                aria-label="Toggle vibe visualization"
+                                aria-pressed={vibeMode}
+                                title={
+                                    vibeMode
+                                        ? "Turn off vibe mode"
+                                        : "Match this vibe - find similar sounding tracks"
+                                }
+                            >
+                                {isVibeLoading ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                    <AudioWaveform className="w-3.5 h-3.5" />
+                                )}
+                            </button>
+                        )}
 
                         {/* Keyboard Shortcuts */}
                         <KeyboardShortcutsTooltip />

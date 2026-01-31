@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import { VibeComparisonArt } from "./VibeOverlay";
 import { useAudioState } from "@/lib/audio-state-context";
 import { SeekSlider } from "./SeekSlider";
+import { useFeatures } from "@/lib/features-context";
 
 export function OverlayPlayer() {
     const {
@@ -75,6 +76,7 @@ export function OverlayPlayer() {
     const touchStartX = useRef<number | null>(null);
     const [swipeOffset, setSwipeOffset] = useState(0);
     const [isVibeLoading, setIsVibeLoading] = useState(false);
+    const { vibeEmbeddings, loading: featuresLoading } = useFeatures();
 
     const duration = (() => {
         if (playbackType === "podcast" && currentPodcast?.duration) {
@@ -537,29 +539,32 @@ export function OverlayPlayer() {
                             )}
                         </button>
 
-                        <button
-                            onClick={handleVibeToggle}
-                            disabled={!canSkip || isVibeLoading}
-                            className={cn(
-                                "transition-colors",
-                                !canSkip
-                                    ? "text-gray-700 cursor-not-allowed"
-                                    : vibeMode
-                                    ? "text-[#f5c518]"
-                                    : "text-gray-500 hover:text-[#f5c518]"
-                            )}
-                            title={
-                                vibeMode
-                                    ? "Turn off vibe mode"
-                                    : "Match this vibe"
-                            }
-                        >
-                            {isVibeLoading ? (
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                            ) : (
-                                <AudioWaveform className="w-5 h-5" />
-                            )}
-                        </button>
+                        {/* Vibe button - only when embeddings available */}
+                        {!featuresLoading && vibeEmbeddings && (
+                            <button
+                                onClick={handleVibeToggle}
+                                disabled={!canSkip || isVibeLoading}
+                                className={cn(
+                                    "transition-colors",
+                                    !canSkip
+                                        ? "text-gray-700 cursor-not-allowed"
+                                        : vibeMode
+                                        ? "text-[#f5c518]"
+                                        : "text-gray-500 hover:text-[#f5c518]"
+                                )}
+                                title={
+                                    vibeMode
+                                        ? "Turn off vibe mode"
+                                        : "Match this vibe"
+                                }
+                            >
+                                {isVibeLoading ? (
+                                    <Loader2 className="w-5 h-5 animate-spin" />
+                                ) : (
+                                    <AudioWaveform className="w-5 h-5" />
+                                )}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
