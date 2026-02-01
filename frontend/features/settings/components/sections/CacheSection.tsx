@@ -624,9 +624,9 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
                             ) : !featuresLoading ? (
                                 <div className="opacity-50 py-2">
                                     <h4 className="text-sm font-medium text-gray-300">Audio Analysis</h4>
-                                    <p className="text-sm text-gray-500">Not available with current profile</p>
+                                    <p className="text-sm text-gray-500">Not available (lite mode)</p>
                                     <p className="text-xs text-gray-600 mt-1">
-                                        Deploy with --profile analysis to enable
+                                        Remove docker-compose.override.yml and restart to enable
                                     </p>
                                 </div>
                             ) : null}
@@ -660,9 +660,9 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
                             ) : !featuresLoading ? (
                                 <div className="opacity-50 py-2">
                                     <h4 className="text-sm font-medium text-gray-300">Vibe Similarity</h4>
-                                    <p className="text-sm text-gray-500">Not available with current profile</p>
+                                    <p className="text-sm text-gray-500">Not available (lite mode)</p>
                                     <p className="text-xs text-gray-600 mt-1">
-                                        Deploy with --profile vibe to enable
+                                        Remove docker-compose.override.yml and restart to enable
                                     </p>
                                 </div>
                             ) : null}

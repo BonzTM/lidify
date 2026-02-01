@@ -594,32 +594,57 @@ export default function OnboardingPage() {
                                                     <span>Detecting available features...</span>
                                                 </div>
                                             ) : (
-                                                <ul className="space-y-3">
-                                                    <li className="flex items-center gap-3">
-                                                        <span className={musicCNN ? "text-green-400" : "text-gray-500"}>
-                                                            {musicCNN ? "\u2713" : "\u2014"}
-                                                        </span>
-                                                        <span className={musicCNN ? "text-white" : "text-gray-500"}>
-                                                            Audio Analysis (BPM, key, mood, energy)
-                                                        </span>
-                                                    </li>
-                                                    <li className="flex items-center gap-3">
-                                                        <span className={vibeEmbeddings ? "text-green-400" : "text-gray-500"}>
-                                                            {vibeEmbeddings ? "\u2713" : "\u2014"}
-                                                        </span>
-                                                        <span className={vibeEmbeddings ? "text-white" : "text-gray-500"}>
-                                                            Vibe Similarity Search
-                                                        </span>
-                                                    </li>
-                                                </ul>
+                                                <div className="space-y-4">
+                                                    <div className={`p-4 rounded-lg border ${musicCNN ? "bg-green-500/5 border-green-500/20" : "bg-white/5 border-white/10"}`}>
+                                                        <div className="flex items-center gap-3 mb-2">
+                                                            <span className={musicCNN ? "text-green-400" : "text-gray-500"}>
+                                                                {musicCNN ? "\u2713" : "\u2014"}
+                                                            </span>
+                                                            <span className={`font-medium ${musicCNN ? "text-white" : "text-gray-500"}`}>
+                                                                MusicCNN Audio Analysis
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-white/50 ml-7">
+                                                            Extracts BPM, musical key, mood, energy, danceability, and other audio features using neural networks trained on music.
+                                                        </p>
+                                                    </div>
+                                                    <div className={`p-4 rounded-lg border ${vibeEmbeddings ? "bg-green-500/5 border-green-500/20" : "bg-white/5 border-white/10"}`}>
+                                                        <div className="flex items-center gap-3 mb-2">
+                                                            <span className={vibeEmbeddings ? "text-green-400" : "text-gray-500"}>
+                                                                {vibeEmbeddings ? "\u2713" : "\u2014"}
+                                                            </span>
+                                                            <span className={`font-medium ${vibeEmbeddings ? "text-white" : "text-gray-500"}`}>
+                                                                CLAP Vibe Embeddings
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-white/50 ml-7">
+                                                            Creates audio fingerprints that capture the overall "vibe" of each track, enabling "find similar tracks" functionality.
+                                                        </p>
+                                                    </div>
+                                                </div>
                                             )}
 
-                                            <p className="text-sm text-gray-400 mt-6">
-                                                Features are determined by which Docker profile you deployed with.
-                                                To change, redeploy with a different{" "}
-                                                <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">--profile</code>{" "}
-                                                flag.
-                                            </p>
+                                            <div className="mt-6 pt-4 border-t border-white/10">
+                                                <p className="text-sm text-gray-400">
+                                                    {(musicCNN || vibeEmbeddings) ? (
+                                                        <>
+                                                            These analyzers run in the background and use ~3-4GB RAM combined.
+                                                            To disable them and save resources, copy{" "}
+                                                            <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">docker-compose.override.yml.lite</code>{" "}
+                                                            to{" "}
+                                                            <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">docker-compose.override.yml</code>{" "}
+                                                            and restart.
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            Running in lite mode. To enable analyzers, remove{" "}
+                                                            <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">docker-compose.override.yml</code>{" "}
+                                                            and restart with{" "}
+                                                            <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">docker compose up -d</code>.
+                                                        </>
+                                                    )}
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <div className="bg-[#0f0f0f] border border-white/10 rounded-lg p-6">

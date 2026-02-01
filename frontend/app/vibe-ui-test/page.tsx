@@ -500,7 +500,7 @@ export default function VibePage() {
                     <p className="text-gray-300 mb-2">Feature not available</p>
                     <p className="text-sm text-gray-500">
                         Vibe similarity requires the CLAP analyzer service.
-                        Deploy with <code className="bg-gray-700 px-1 rounded">--profile vibe</code> to enable.
+                        Remove <code className="bg-gray-700 px-1 rounded">docker-compose.override.yml</code> and restart to enable.
                     </p>
                 </div>
             </div>
