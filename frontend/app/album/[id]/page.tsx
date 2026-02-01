@@ -55,9 +55,14 @@ export default function AlbumPage({ params }: AlbumPageProps) {
         rawCoverUrl === "/placeholder-album.png"
             ? rawCoverUrl
             : api.getCoverArtUrl(rawCoverUrl, 1200);
+    // Separate URL with token for color extraction (CORS access for canvas)
+    const colorExtractionUrl =
+        rawCoverUrl === "/placeholder-album.png"
+            ? rawCoverUrl
+            : api.getCoverArtUrl(rawCoverUrl, 300, true);
 
     // Extract colors
-    const { colors } = useImageColor(coverUrl);
+    const { colors } = useImageColor(colorExtractionUrl);
 
     // Loading and error states
     if (loading) {

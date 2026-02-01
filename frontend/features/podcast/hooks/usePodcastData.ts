@@ -44,6 +44,8 @@ export function usePodcastData() {
   // Get raw cover URL
   const rawCoverUrl = podcast?.coverUrl || previewData?.coverUrl;
   const heroImage = rawCoverUrl ? api.getCoverArtUrl(rawCoverUrl, 1200) : null;
+  // Separate URL with token for color extraction (CORS access for canvas)
+  const colorExtractionImage = rawCoverUrl ? api.getCoverArtUrl(rawCoverUrl, 300, true) : null;
 
   // Load similar podcasts when podcast data is available
   useEffect(() => {
@@ -140,6 +142,7 @@ export function usePodcastData() {
     displayData,
     isLoading,
     heroImage,
+    colorExtractionImage,
     similarPodcasts,
     sortOrder,
     setSortOrder,

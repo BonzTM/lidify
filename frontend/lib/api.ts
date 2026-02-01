@@ -571,15 +571,19 @@ class ApiClient {
         return baseUrl;
     }
 
-    getCoverArtUrl(coverId: string, size?: number): string {
+    /**
+     * Get the URL for cover art.
+     * @param coverId - The cover ID, URL, or path
+     * @param size - Optional size in pixels
+     * @param includeToken - Include auth token in URL (needed for canvas color extraction)
+     */
+    getCoverArtUrl(coverId: string, size?: number, includeToken = false): string {
         const baseUrl = this.getBaseUrl();
 
         // Check if this is an audiobook cover path (served by audiobooks endpoint, not proxied)
         if (coverId && coverId.startsWith("/audiobooks/")) {
-            // Return direct path - audiobook covers are served from local disk
-            // Add token for cross-origin requests (canvas color extraction needs this)
             const url = `${baseUrl}/api${coverId}`;
-            if (this.token) {
+            if (includeToken && this.token) {
                 return `${url}?token=${encodeURIComponent(this.token)}`;
             }
             return url;
@@ -587,10 +591,8 @@ class ApiClient {
 
         // Check if this is a podcast cover path (served by podcasts endpoint, not proxied)
         if (coverId && coverId.startsWith("/podcasts/")) {
-            // Return direct path - podcast covers are served from local disk or redirected
-            // Add token for cross-origin requests (canvas color extraction needs this)
             const url = `${baseUrl}/api${coverId}`;
-            if (this.token) {
+            if (includeToken && this.token) {
                 return `${url}?token=${encodeURIComponent(this.token)}`;
             }
             return url;
@@ -607,16 +609,14 @@ class ApiClient {
             // Pass as query parameter to avoid URL encoding issues
             const params = new URLSearchParams({ url: coverId });
             if (size) params.append("size", size.toString());
-            // Add token for cross-origin requests (canvas color extraction needs this)
-            if (this.token) params.append("token", this.token);
+            if (includeToken && this.token) params.append("token", this.token);
             return `${baseUrl}/api/library/cover-art?${params.toString()}`;
         }
 
         // Otherwise use as path parameter (cover ID - typically a hash)
         const params = new URLSearchParams();
         if (size) params.append("size", size.toString());
-        // Add token for cross-origin requests (canvas color extraction needs this)
-        if (this.token) params.append("token", this.token);
+        if (includeToken && this.token) params.append("token", this.token);
         const queryString = params.toString();
         return `${baseUrl}/api/library/cover-art/${encodeURIComponent(coverId)}${
             queryString ? "?" + queryString : ""

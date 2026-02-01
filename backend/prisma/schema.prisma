@@ -898,11 +898,11 @@ enum AlbumLocation {
 }
 
 model TrackEmbedding {
-  trackId      String                      @id @map("track_id")
-  embedding    Unsupported("vector(1024)")
-  modelVersion String                      @default("laion-clap-music") @map("model_version") @db.VarChar(50)
-  analyzedAt   DateTime                    @default(now()) @map("analyzed_at") @db.Timestamptz
-  track        Track                       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId      String                     @id @map("track_id")
+  embedding    Unsupported("vector(512)")
+  modelVersion String                     @default("laion-clap-music") @map("model_version") @db.VarChar(50)
+  analyzedAt   DateTime                   @default(now()) @map("analyzed_at") @db.Timestamptz
+  track        Track                      @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@index([modelVersion])
   @@map("track_embeddings")

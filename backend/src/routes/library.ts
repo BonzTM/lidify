@@ -924,38 +924,19 @@ router.get("/artists/:id", async (req, res) => {
             // We now use similarArtistsJson which is fetched by default
         };
 
-        // Try finding by ID first
-        let artist = await prisma.artist.findUnique({
-            where: { id: idParam },
+        // Single query with OR to find artist by ID, name, or MBID
+        const decodedName = decodeURIComponent(idParam);
+        const isMbidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idParam);
+        const artist = await prisma.artist.findFirst({
+            where: {
+                OR: [
+                    { id: idParam },
+                    { name: { equals: decodedName, mode: "insensitive" } },
+                    ...(isMbidFormat ? [{ mbid: idParam }] : []),
+                ],
+            },
             include: artistInclude,
         });
-
-        // If not found by ID, try by name (for URL-encoded names)
-        if (!artist) {
-            const decodedName = decodeURIComponent(idParam);
-            artist = await prisma.artist.findFirst({
-                where: {
-                    name: {
-                        equals: decodedName,
-                        mode: "insensitive",
-                    },
-                },
-                include: artistInclude,
-            });
-        }
-
-        // If not found and param looks like an MBID, try looking up by MBID
-        if (
-            !artist &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-                idParam
-            )
-        ) {
-            artist = await prisma.artist.findFirst({
-                where: { mbid: idParam },
-                include: artistInclude,
-            });
-        }
 
         if (!artist) {
             return res.status(404).json({ error: "Artist not found" });
@@ -1229,14 +1210,22 @@ router.get("/artists/:id", async (req, res) => {
                 );
             }
 
+            // Build lookup map for O(1) matching instead of O(n*m)
+            const tracksByTitle = new Map<string, (typeof allTracks)[0]>();
+            for (const track of allTracks) {
+                const key = track.title.toLowerCase();
+                if (!tracksByTitle.has(key)) {
+                    tracksByTitle.set(key, track);
+                }
+            }
+
             // For each Last.fm track, try to match with library track or add as unowned
             const combinedTracks: any[] = [];
 
             for (const lfmTrack of lastfmTopTracks) {
-                // Try to find matching track in library
-                const matchedTrack = allTracks.find(
-                    (t) => t.title.toLowerCase() === lfmTrack.name.toLowerCase()
-                );
+                // O(1) lookup instead of O(n) find
+                const key = lfmTrack.name.toLowerCase();
+                const matchedTrack = tracksByTitle.get(key);
 
                 if (matchedTrack) {
                     // Track exists in library - include user play count
@@ -1658,9 +1647,14 @@ router.get("/albums/:id", async (req, res) => {
     try {
         const idParam = req.params.id;
 
-        // Try finding by ID first
-        let album = await prisma.album.findUnique({
-            where: { id: idParam },
+        // Find album by ID or rgMbid (for discovery albums) in single query
+        const album = await prisma.album.findFirst({
+            where: {
+                OR: [
+                    { id: idParam },
+                    { rgMbid: idParam },
+                ],
+            },
             include: {
                 artist: {
                     select: {
@@ -1675,30 +1669,11 @@ router.get("/albums/:id", async (req, res) => {
             },
         });
 
-        // If not found by ID, try by rgMbid (for discovery albums)
-        if (!album) {
-            album = await prisma.album.findFirst({
-                where: { rgMbid: idParam },
-                include: {
-                    artist: {
-                        select: {
-                            id: true,
-                            mbid: true,
-                            name: true,
-                        },
-                    },
-                    tracks: {
-                        orderBy: { trackNo: Prisma.SortOrder.asc },
-                    },
-                },
-            });
-        }
-
         if (!album) {
             return res.status(404).json({ error: "Album not found" });
         }
 
-        // Check ownership
+        // Check ownership with O(1) indexed lookup (separate query is faster than fetching all ownedAlbums)
         const owned = await prisma.ownedAlbum.findUnique({
             where: {
                 artistId_rgMbid: {
@@ -1707,10 +1682,14 @@ router.get("/albums/:id", async (req, res) => {
                 },
             },
         });
+        const isOwned = !!owned;
+
+        const artistData = album.artist;
 
         res.json({
             ...album,
-            owned: !!owned,
+            artist: artistData,
+            owned: isOwned,
             coverArt: album.coverUrl,
         });
     } catch (error) {

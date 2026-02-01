@@ -40,7 +40,7 @@ export interface EnrichmentState {
 
 export interface EnrichmentFailure {
     id: string;
-    entityType: "artist" | "track" | "audio";
+    entityType: "artist" | "track" | "audio" | "vibe";
     entityId: string;
     entityName: string | null;
     errorMessage: string | null;
@@ -60,6 +60,7 @@ export interface FailureCounts {
     artist: number;
     track: number;
     audio: number;
+    vibe: number;
     total: number;
 }
 
@@ -110,7 +111,7 @@ export const enrichmentApi = {
      * Get enrichment failures with filtering
      */
     getFailures: async (params?: {
-        entityType?: "artist" | "track" | "audio";
+        entityType?: "artist" | "track" | "audio" | "vibe";
         includeSkipped?: boolean;
         includeResolved?: boolean;
         limit?: number;
@@ -167,7 +168,7 @@ export const enrichmentApi = {
      * Clear all failure records (optionally filtered by type)
      */
     clearAllFailures: async (
-        entityType?: "artist" | "track" | "audio"
+        entityType?: "artist" | "track" | "audio" | "vibe"
     ): Promise<{ message: string; count: number }> => {
         const query = entityType ? `?entityType=${entityType}` : "";
         return api.delete(`/enrichment/failures${query}`);
@@ -222,5 +223,19 @@ export const enrichmentApi = {
             method: "PUT",
             body: JSON.stringify({ workers }),
         });
+    },
+
+    /**
+     * Retry failed vibe embeddings
+     */
+    retryVibeEmbeddings: async (): Promise<{ message: string; queued: number }> => {
+        return api.post("/analysis/vibe/retry", {});
+    },
+
+    /**
+     * Reset all vibe embeddings (queue all tracks for re-embedding)
+     */
+    resetVibeEmbeddings: async (): Promise<{ message: string; queued: number }> => {
+        return api.post("/analysis/vibe/start", { force: true });
     },
 };

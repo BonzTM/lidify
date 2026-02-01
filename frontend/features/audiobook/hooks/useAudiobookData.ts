@@ -21,9 +21,13 @@ export function useAudiobookData() {
     return unsubscribe;
   }, [refetch]);
 
-  // Calculate hero image for color extraction
+  // Hero image for display (no token for proper caching)
   const heroImage = audiobook?.coverUrl
     ? api.getCoverArtUrl(audiobook.coverUrl, 1200)
+    : null;
+  // Separate URL with token for color extraction (CORS access for canvas)
+  const colorExtractionImage = audiobook?.coverUrl
+    ? api.getCoverArtUrl(audiobook.coverUrl, 300, true)
     : null;
 
   // Extract metadata from audioFiles
@@ -65,6 +69,7 @@ export function useAudiobookData() {
     isLoading,
     refetch,
     heroImage,
+    colorExtractionImage,
     metadata: getMetadata(),
   };
 }

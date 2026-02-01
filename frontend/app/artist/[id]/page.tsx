@@ -67,8 +67,9 @@ export default function ArtistPage() {
         rawImageUrl ? api.getCoverArtUrl(rawImageUrl, 1200) : null;
 
     // Use a low-res image for color extraction and background blur to save CPU
+    // Include token for CORS access needed by canvas color extraction
     const lowResImage =
-        rawImageUrl ? api.getCoverArtUrl(rawImageUrl, 300) : null;
+        rawImageUrl ? api.getCoverArtUrl(rawImageUrl, 300, true) : null;
 
     const { colors } = useImageColor(lowResImage || rawImageUrl);
 

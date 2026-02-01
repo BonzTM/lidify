@@ -1,7 +1,7 @@
 // Lidify Service Worker
 const CACHE_NAME = 'lidify-v1';
-const IMAGE_CACHE_NAME = 'lidify-images-v1';
-const MAX_IMAGE_CACHE_ENTRIES = 500;
+const IMAGE_CACHE_NAME = 'lidify-images-v2';
+const MAX_IMAGE_CACHE_ENTRIES = 2000;
 const MAX_CONCURRENT_IMAGE_REQUESTS = 8;
 const REQUEST_DELAY_MS = 10;
 

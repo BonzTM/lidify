@@ -10,7 +10,7 @@ import { prisma } from "../utils/db";
 
 export interface EnrichmentFailure {
     id: string;
-    entityType: "artist" | "track" | "audio";
+    entityType: "artist" | "track" | "audio" | "vibe";
     entityId: string;
     entityName: string | null;
     errorMessage: string | null;
@@ -27,7 +27,7 @@ export interface EnrichmentFailure {
 }
 
 export interface RecordFailureInput {
-    entityType: "artist" | "track" | "audio";
+    entityType: "artist" | "track" | "audio" | "vibe";
     entityId: string;
     entityName?: string;
     errorMessage: string;
@@ -36,7 +36,7 @@ export interface RecordFailureInput {
 }
 
 export interface GetFailuresOptions {
-    entityType?: "artist" | "track" | "audio";
+    entityType?: "artist" | "track" | "audio" | "vibe";
     includeSkipped?: boolean;
     includeResolved?: boolean;
     limit?: number;
@@ -154,9 +154,10 @@ class EnrichmentFailureService {
         artist: number;
         track: number;
         audio: number;
+        vibe: number;
         total: number;
     }> {
-        const [artistCount, trackCount, audioCount] = await Promise.all([
+        const [artistCount, trackCount, audioCount, vibeCount] = await Promise.all([
             prisma.enrichmentFailure.count({
                 where: {
                     entityType: "artist",
@@ -170,13 +171,17 @@ class EnrichmentFailureService {
             prisma.enrichmentFailure.count({
                 where: { entityType: "audio", resolved: false, skipped: false },
             }),
+            prisma.enrichmentFailure.count({
+                where: { entityType: "vibe", resolved: false, skipped: false },
+            }),
         ]);
 
         return {
             artist: artistCount,
             track: trackCount,
             audio: audioCount,
-            total: artistCount + trackCount + audioCount,
+            vibe: vibeCount,
+            total: artistCount + trackCount + audioCount + vibeCount,
         };
     }
 
@@ -247,7 +252,7 @@ class EnrichmentFailureService {
     /**
      * Clear all unresolved failures (optionally filtered by type)
      */
-    async clearAllFailures(entityType?: "artist" | "track" | "audio"): Promise<number> {
+    async clearAllFailures(entityType?: "artist" | "track" | "audio" | "vibe"): Promise<number> {
         const where: any = {
             resolved: false,
             skipped: false,

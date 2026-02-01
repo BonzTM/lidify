@@ -2348,6 +2348,179 @@ class LidarrService {
             return [];
         }
     }
+
+    // ============================================
+    // BATCH RECONCILIATION METHODS
+    // ============================================
+
+    /**
+     * Fetch all data needed for reconciliation in minimal API calls.
+     * Returns indexed Maps for O(1) lookups against job data.
+     *
+     * This replaces multiple per-job API calls with a single snapshot fetch.
+     */
+    async getReconciliationSnapshot(): Promise<ReconciliationSnapshot> {
+        await this.ensureInitialized();
+
+        const snapshot: ReconciliationSnapshot = {
+            queue: new Map(),
+            albumsByMbid: new Map(),
+            albumsByTitle: new Map(),
+            fetchedAt: new Date(),
+        };
+
+        if (!this.enabled || !this.client) {
+            return snapshot;
+        }
+
+        try {
+            // Fetch queue and albums in parallel
+            const [queueResponse, albumsResponse] = await Promise.all([
+                this.client.get("/api/v1/queue", {
+                    params: { page: 1, pageSize: 1000, includeUnknownArtistItems: true },
+                }).catch((err) => {
+                    logger.error("[LIDARR] Failed to fetch queue for snapshot:", err.message);
+                    return { data: { records: [] } };
+                }),
+                this.client.get("/api/v1/album").catch((err) => {
+                    logger.error("[LIDARR] Failed to fetch albums for snapshot:", err.message);
+                    return { data: [] };
+                }),
+            ]);
+
+            // Index queue items by downloadId
+            const queueItems = queueResponse.data.records || [];
+            for (const item of queueItems) {
+                if (item.downloadId) {
+                    snapshot.queue.set(item.downloadId, {
+                        id: item.id,
+                        downloadId: item.downloadId,
+                        status: item.status,
+                        progress: item.sizeleft && item.size
+                            ? Math.round(((item.size - item.sizeleft) / item.size) * 100)
+                            : undefined,
+                        title: item.title,
+                    });
+                }
+            }
+
+            // Index albums by MBID and normalized title
+            const albums = albumsResponse.data || [];
+            for (const album of albums) {
+                const hasFiles = album.statistics?.percentOfTracks > 0;
+                if (!hasFiles) continue; // Only index albums with files
+
+                const albumInfo: AlbumSnapshotInfo = {
+                    id: album.id,
+                    title: album.title,
+                    foreignAlbumId: album.foreignAlbumId,
+                    artistName: album.artist?.artistName || "",
+                    hasFiles: true,
+                };
+
+                // Index by MBID
+                if (album.foreignAlbumId) {
+                    snapshot.albumsByMbid.set(album.foreignAlbumId, albumInfo);
+                }
+
+                // Index by normalized "artist|title" for title-based lookups
+                if (albumInfo.artistName && album.title) {
+                    const key = `${albumInfo.artistName.toLowerCase().trim()}|${album.title.toLowerCase().trim()}`;
+                    snapshot.albumsByTitle.set(key, albumInfo);
+                }
+            }
+
+            logger.debug(
+                `[LIDARR] Snapshot fetched: ${snapshot.queue.size} queue items, ${snapshot.albumsByMbid.size} albums with files`
+            );
+
+            return snapshot;
+        } catch (error: any) {
+            logger.error("[LIDARR] Failed to create reconciliation snapshot:", error.message);
+            return snapshot;
+        }
+    }
+
+    /**
+     * Check if an album is available using a pre-fetched snapshot.
+     * Returns true if the album exists with files.
+     */
+    isAlbumAvailableInSnapshot(
+        snapshot: ReconciliationSnapshot,
+        mbid?: string,
+        artistName?: string,
+        albumTitle?: string
+    ): boolean {
+        // Strategy 1: Check by MBID
+        if (mbid && snapshot.albumsByMbid.has(mbid)) {
+            return true;
+        }
+
+        // Strategy 2: Check by normalized artist|title
+        if (artistName && albumTitle) {
+            const key = `${artistName.toLowerCase().trim()}|${albumTitle.toLowerCase().trim()}`;
+            if (snapshot.albumsByTitle.has(key)) {
+                return true;
+            }
+
+            // Strategy 3: Partial title match (handles edition differences)
+            const normalizedArtist = artistName.toLowerCase().trim();
+            const normalizedAlbum = albumTitle.toLowerCase().trim();
+            for (const [titleKey, info] of snapshot.albumsByTitle) {
+                const [keyArtist, keyAlbum] = titleKey.split("|");
+                if (
+                    keyArtist === normalizedArtist &&
+                    (keyAlbum.includes(normalizedAlbum) || normalizedAlbum.includes(keyAlbum))
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if a download is active using a pre-fetched snapshot.
+     */
+    isDownloadActiveInSnapshot(
+        snapshot: ReconciliationSnapshot,
+        downloadId: string
+    ): { active: boolean; progress?: number } {
+        const item = snapshot.queue.get(downloadId);
+        if (!item) {
+            return { active: false };
+        }
+        // Consider it active unless explicitly failed
+        const isActive = item.status !== "failed" && item.status !== "warning";
+        return { active: isActive, progress: item.progress };
+    }
+}
+
+/**
+ * Snapshot of Lidarr state for efficient batch reconciliation
+ */
+export interface ReconciliationSnapshot {
+    queue: Map<string, QueueSnapshotItem>;
+    albumsByMbid: Map<string, AlbumSnapshotInfo>;
+    albumsByTitle: Map<string, AlbumSnapshotInfo>;
+    fetchedAt: Date;
+}
+
+export interface QueueSnapshotItem {
+    id: number;
+    downloadId: string;
+    status: string;
+    progress?: number;
+    title: string;
+}
+
+export interface AlbumSnapshotInfo {
+    id: number;
+    title: string;
+    foreignAlbumId: string;
+    artistName: string;
+    hasFiles: boolean;
 }
 
 // Interface for calendar release data

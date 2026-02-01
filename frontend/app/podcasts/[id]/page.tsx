@@ -24,6 +24,7 @@ export default function PodcastDetailPage() {
         displayData,
         isLoading,
         heroImage,
+        colorExtractionImage,
         similarPodcasts,
         sortOrder,
         setSortOrder,
@@ -31,8 +32,8 @@ export default function PodcastDetailPage() {
         sortedEpisodes,
     } = usePodcastData();
 
-    // Extract colors from the proxied image URL
-    const { colors } = useImageColor(heroImage);
+    // Extract colors from the proxied image URL (uses token for CORS canvas access)
+    const { colors } = useImageColor(colorExtractionImage);
 
     // Action hooks - pass sortedEpisodes for queue building
     const {

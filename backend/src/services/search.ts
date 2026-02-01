@@ -638,7 +638,11 @@ export class SearchService {
         }
     }
 
-    async searchAll({ query, limit = 10 }: SearchOptions): Promise<SearchResults> {
+    async searchAll({
+        query,
+        limit = 10,
+        genre,
+    }: SearchOptions & { genre?: string }): Promise<SearchResults> {
         if (!query || query.trim().length === 0) {
             return {
                 artists: [],
@@ -651,7 +655,7 @@ export class SearchService {
         }
 
         // Check Redis cache first
-        const cacheKey = `search:all:${query}:${limit}`;
+        const cacheKey = `search:all:${query}:${limit}:${genre || ""}`;
         try {
             const cached = await redisClient.get(cacheKey);
             if (cached) {
@@ -691,7 +695,7 @@ export class SearchService {
         const results = {
             artists,
             albums,
-            tracks,
+            tracks: genre ? await this.filterTracksByGenre(tracks, genre) : tracks,
             podcasts,
             audiobooks,
             episodes,

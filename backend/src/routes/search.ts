@@ -102,11 +102,12 @@ router.get("/", async (req, res) => {
             });
         }
 
-        // Delegate to service (handles caching + parallel execution)
+        // Delegate to service (handles caching + parallel execution + genre filtering)
         if (type === "all") {
             const serviceResults = await searchService.searchAll({
                 query,
                 limit: searchLimit,
+                genre: genre as string | undefined,
             });
 
             // Transform results to API format
@@ -146,31 +147,6 @@ router.get("/", async (req, res) => {
                 podcasts: serviceResults.podcasts,
                 episodes: serviceResults.episodes,
             };
-
-            // Apply genre filter to tracks if specified
-            if (genre && results.tracks.length > 0) {
-                const trackIds = results.tracks.map((t) => t.id);
-                const tracksWithGenre = await prisma.track.findMany({
-                    where: {
-                        id: { in: trackIds },
-                        trackGenres: {
-                            some: {
-                                genre: {
-                                    name: {
-                                        equals: genre as string,
-                                        mode: "insensitive",
-                                    },
-                                },
-                            },
-                        },
-                    },
-                    select: { id: true },
-                });
-                const genreTrackIds = new Set(tracksWithGenre.map((t) => t.id));
-                results.tracks = results.tracks.filter((t) =>
-                    genreTrackIds.has(t.id)
-                );
-            }
 
             return res.json(results);
         }
