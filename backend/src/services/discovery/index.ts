@@ -5,3 +5,4 @@ export {
     DiscoveryAlbumInfo,
     LidarrSettings,
 } from './discoveryAlbumLifecycle';
+export { DiscoverySeeding, discoverySeeding, SeedArtist } from './discoverySeeding';
