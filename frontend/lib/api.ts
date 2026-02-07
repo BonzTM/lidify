@@ -989,6 +989,14 @@ class ApiClient {
         return this.request<ApiData[]>(`/downloads${query}`);
     }
 
+    async getDownloadAvailability() {
+        return this.request<{
+            enabled: boolean;
+            lidarr: boolean;
+            soulseek: boolean;
+        }>("/downloads/availability");
+    }
+
     async deleteDownload(id: string) {
         return this.request<{ success: boolean }>(`/downloads/${id}`, {
             method: "DELETE",

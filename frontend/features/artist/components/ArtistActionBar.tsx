@@ -20,6 +20,7 @@ interface ArtistActionBarProps {
     isPlaying?: boolean;
     isPlayingThisArtist?: boolean;
     onPause?: () => void;
+    downloadsEnabled?: boolean;
 }
 
 export function ArtistActionBar({
@@ -35,11 +36,12 @@ export function ArtistActionBar({
     isPlaying = false,
     isPlayingThisArtist = false,
     onPause,
+    downloadsEnabled = true,
 }: ArtistActionBarProps) {
     const availableAlbums = albums.filter(
         (album) => album.availability !== "unavailable"
     );
-    const showDownloadAll = source === "discovery" || availableAlbums.length > 0;
+    const showDownloadAll = downloadsEnabled && (source === "discovery" || availableAlbums.length > 0);
     const showPause = isPlaying && isPlayingThisArtist;
     const showRadio = source === "library" && onStartRadio;
 

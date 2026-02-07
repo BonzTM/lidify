@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useDownloadStatus, DownloadJob } from "@/hooks/useDownloadStatus";
 import { useAuth } from "@/lib/auth-context";
+import { api } from "@/lib/api";
 
 interface PendingDownload {
     id: string;
@@ -28,6 +29,7 @@ interface DownloadContextType {
         hasActiveDownloads: boolean;
         failedDownloads: DownloadJob[];
     };
+    downloadsEnabled: boolean;
     addPendingDownload: (
         type: "artist" | "album",
         subject: string,
@@ -50,6 +52,26 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     );
     const { isAuthenticated } = useAuth();
     const downloadStatus = useDownloadStatus(15000, isAuthenticated);
+    const [downloadsEnabled, setDownloadsEnabled] = useState(false);
+
+    // Fetch download service availability on mount / when auth changes
+    useEffect(() => {
+        if (!isAuthenticated) {
+            setDownloadsEnabled(false);
+            return;
+        }
+
+        let mounted = true;
+        api.getDownloadAvailability()
+            .then((result) => {
+                if (mounted) setDownloadsEnabled(result.enabled);
+            })
+            .catch(() => {
+                if (mounted) setDownloadsEnabled(false);
+            });
+
+        return () => { mounted = false; };
+    }, [isAuthenticated]);
 
     // Sync pending downloads with actual download status (render-time adjustment)
     const [prevActiveDownloads, setPrevActiveDownloads] = useState(downloadStatus.activeDownloads);
@@ -166,6 +188,7 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     const contextValue = useMemo(() => ({
         pendingDownloads,
         downloadStatus,
+        downloadsEnabled,
         addPendingDownload,
         removePendingDownload,
         removePendingByMbid,
@@ -175,6 +198,7 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     }), [
         pendingDownloads,
         downloadStatus,
+        downloadsEnabled,
         addPendingDownload,
         removePendingDownload,
         removePendingByMbid,

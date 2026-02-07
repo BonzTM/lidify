@@ -14,6 +14,7 @@ interface AvailableAlbumsProps {
     colors: ColorPalette | null;
     onDownloadAlbum: (album: Album, e: React.MouseEvent) => void;
     isPendingDownload: (mbid: string) => boolean;
+    downloadsEnabled?: boolean;
 }
 
 // Component to handle lazy-loading cover art for albums without cached covers
@@ -24,6 +25,7 @@ function LazyAlbumCard({
     onDownloadAlbum,
     isPendingDownload,
     index,
+    downloadsEnabled = true,
 }: {
     album: Album;
     source: ArtistSource;
@@ -31,6 +33,7 @@ function LazyAlbumCard({
     onDownloadAlbum: (album: Album, e: React.MouseEvent) => void;
     isPendingDownload: (mbid: string) => boolean;
     index: number;
+    downloadsEnabled?: boolean;
 }) {
     const [coverArt, setCoverArt] = useState<string | null>(() => {
         // Initial cover art from props
@@ -92,7 +95,7 @@ function LazyAlbumCard({
                 <Disc3 className="w-12 h-12 text-gray-600" />
             }
             circular={false}
-            badge="download"
+            badge={downloadsEnabled ? "download" : null}
             showPlayButton={false}
             colors={colors}
             isDownloading={isPendingDownload(albumMbid)}
@@ -108,6 +111,7 @@ function AlbumGrid({
     colors,
     onDownloadAlbum,
     isPendingDownload,
+    downloadsEnabled,
 }: Omit<AvailableAlbumsProps, "artistName">) {
     return (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -120,6 +124,7 @@ function AlbumGrid({
                     onDownloadAlbum={onDownloadAlbum}
                     isPendingDownload={isPendingDownload}
                     index={index}
+                    downloadsEnabled={downloadsEnabled}
                 />
             ))}
         </div>
@@ -133,6 +138,7 @@ export function AvailableAlbums({
     colors,
     onDownloadAlbum,
     isPendingDownload,
+    downloadsEnabled = true,
 }: AvailableAlbumsProps) {
     if (!albums || albums.length === 0) {
         return null;
@@ -161,6 +167,7 @@ export function AvailableAlbums({
                             colors={colors}
                             onDownloadAlbum={onDownloadAlbum}
                             isPendingDownload={isPendingDownload}
+                            downloadsEnabled={downloadsEnabled}
                         />
                     </div>
                 </section>
@@ -179,6 +186,7 @@ export function AvailableAlbums({
                             colors={colors}
                             onDownloadAlbum={onDownloadAlbum}
                             isPendingDownload={isPendingDownload}
+                            downloadsEnabled={downloadsEnabled}
                         />
                     </div>
                 </section>

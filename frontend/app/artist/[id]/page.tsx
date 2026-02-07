@@ -34,7 +34,7 @@ export default function ArtistPage() {
     const { currentTrack } = useAudioState();
     const { isPlaying } = useAudioPlayback();
     const { playTracks, pause } = useAudioControls();
-    const { isPendingByMbid } = useDownloadContext();
+    const { isPendingByMbid, downloadsEnabled } = useDownloadContext();
 
     // Data hook
     const {
@@ -204,6 +204,7 @@ export default function ArtistPage() {
                         currentTrack?.artist?.name === artist.name
                     }
                     onPause={pause}
+                    downloadsEnabled={downloadsEnabled}
                 />
             </ArtistHero>
 
@@ -260,6 +261,7 @@ export default function ArtistPage() {
                         colors={colors}
                         onDownloadAlbum={handleDownloadAlbum}
                         isPendingDownload={isPendingByMbid}
+                        downloadsEnabled={downloadsEnabled}
                     />
 
                     {/* Similar Artists */}

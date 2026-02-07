@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Calendar, Clock, Download, Music2, Disc, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
+import { useDownloadContext } from "@/lib/download-context";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -33,6 +34,7 @@ export default function ReleasesPage() {
     const [loading, setLoading] = useState(true);
     const [downloadingId, setDownloadingId] = useState<string | number | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const { downloadsEnabled } = useDownloadContext();
 
     const fetchReleases = async () => {
         try {
@@ -147,6 +149,7 @@ export default function ReleasesPage() {
                                     formatDate={formatDate}
                                     onDownload={handleDownload}
                                     isDownloading={downloadingId === release.id}
+                                    downloadsEnabled={downloadsEnabled}
                                 />
                             ))}
                         </div>
@@ -170,6 +173,7 @@ export default function ReleasesPage() {
                                     formatDate={formatDate}
                                     onDownload={handleDownload}
                                     isDownloading={downloadingId === release.id}
+                                    downloadsEnabled={downloadsEnabled}
                                 />
                             ))}
                         </div>
@@ -203,11 +207,13 @@ function ReleaseCard({
     formatDate,
     onDownload,
     isDownloading,
+    downloadsEnabled = true,
 }: {
     release: ReleaseItem;
     formatDate: (date: string) => string;
     onDownload: (albumMbid: string, releaseId: string | number) => void;
     isDownloading: boolean;
+    downloadsEnabled?: boolean;
 }) {
     const isUpcoming = release.status === 'upcoming';
     const hasIt = release.inLibrary;
@@ -242,7 +248,7 @@ function ReleaseCard({
                 </div>
 
                 {/* Download Button Overlay */}
-                {release.canDownload && !hasIt && (
+                {downloadsEnabled && release.canDownload && !hasIt && (
                     <button
                         onClick={() => onDownload(release.albumMbid, release.id)}
                         disabled={isDownloading}

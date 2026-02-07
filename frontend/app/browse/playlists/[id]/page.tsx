@@ -16,6 +16,7 @@ import {
     VolumeX,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useDownloadContext } from "@/lib/download-context";
 import { useToast } from "@/lib/toast-context";
 import { cn } from "@/utils/cn";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
@@ -173,6 +174,7 @@ export default function DeezerPlaylistDetailPage() {
     };
 
     // Handle import/download
+    const { downloadsEnabled } = useDownloadContext();
     const handleImport = () => {
         if (!playlist) return;
         // Navigate to import page with the Deezer URL
@@ -303,6 +305,7 @@ export default function DeezerPlaylistDetailPage() {
             <div className="bg-gradient-to-b from-[#1a1a1a]/60 to-transparent px-4 md:px-8 py-4">
                 <div className="flex items-center gap-4">
                     {/* Download/Import Button */}
+                    {downloadsEnabled && (
                     <button
                         onClick={handleImport}
                         disabled={isImporting}
@@ -317,6 +320,7 @@ export default function DeezerPlaylistDetailPage() {
                             {isImporting ? "Importing..." : "Download & Create Playlist"}
                         </span>
                     </button>
+                    )}
 
                     {/* Volume Control (when playing preview) */}
                     {playingTrackId && (

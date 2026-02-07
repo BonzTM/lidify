@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { CheckCircle, XCircle, Trash2, RotateCcw, History, Disc, Music } from "lucide-react";
 import { api } from "@/lib/api";
+import { useDownloadContext } from "@/lib/download-context";
 import { cn } from "@/utils/cn";
 
 interface DownloadHistory {
@@ -19,6 +20,7 @@ export function HistoryTab() {
     const [history, setHistory] = useState<DownloadHistory[]>([]);
     const [loading, setLoading] = useState(true);
     const [retrying, setRetrying] = useState<Set<string>>(new Set());
+    const { downloadsEnabled } = useDownloadContext();
 
     const fetchHistory = async () => {
         try {
@@ -141,7 +143,7 @@ export function HistoryTab() {
                                 key={item.id}
                                 item={item}
                                 onClear={handleClear}
-                                onRetry={handleRetry}
+                                onRetry={downloadsEnabled ? handleRetry : undefined}
                                 isRetrying={retrying.has(item.id)}
                             />
                         ))}
