@@ -875,40 +875,47 @@ async def proxy_stream(
 
     # For range requests, fetch upstream first to get headers
     if headers.get("Range"):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0)) as client:
-            upstream = await client.send(
-                client.build_request("GET", stream_url, headers=headers),
-                stream=True,
-            )
-            response_headers = {
-                "Content-Type": content_type,
-                "Accept-Ranges": "bytes",
-            }
-            if "content-range" in upstream.headers:
-                response_headers["Content-Range"] = upstream.headers["content-range"]
-            # NOTE: We intentionally do NOT forward Content-Length here.
-            # If the upstream drops mid-stream (ReadError), h11 enforces the
-            # declared length and raises "Too little data for declared
-            # Content-Length", crashing the ASGI app.  By omitting it,
-            # Starlette uses chunked transfer encoding, which allows the
-            # stream to end cleanly on error and lets the browser retry
-            # with a new Range request.
+        # IMPORTANT: Do NOT use `async with` for the client here.
+        # The client must stay alive for the entire duration of the stream,
+        # not just until the StreamingResponse object is created.  If we
+        # used `async with`, the `return` would exit the context manager,
+        # closing the client/connection before Starlette ever iterates
+        # the generator — causing an immediate ReadError on every request.
+        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0))
+        upstream = await client.send(
+            client.build_request("GET", stream_url, headers=headers),
+            stream=True,
+        )
+        response_headers = {
+            "Content-Type": content_type,
+            "Accept-Ranges": "bytes",
+        }
+        if "content-range" in upstream.headers:
+            response_headers["Content-Range"] = upstream.headers["content-range"]
+        # NOTE: We intentionally do NOT forward Content-Length here.
+        # If the upstream drops mid-stream (ReadError), h11 enforces the
+        # declared length and raises "Too little data for declared
+        # Content-Length", crashing the ASGI app.  By omitting it,
+        # Starlette uses chunked transfer encoding, which allows the
+        # stream to end cleanly on error and lets the browser retry
+        # with a new Range request.
 
-            async def range_stream():
-                try:
-                    async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                        yield chunk
-                except (httpx.HTTPError, httpx.StreamError, httpx.ReadError) as e:
-                    log.warning(f"Upstream read error during range stream for {video_id}: {e}")
-                    # End the stream gracefully — the browser will retry
-                finally:
-                    await upstream.aclose()
+        async def range_stream():
+            try:
+                async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                    yield chunk
+            except (httpx.HTTPError, httpx.StreamError, httpx.ReadError) as e:
+                log.warning(f"Upstream read error during range stream for {video_id}: {e}")
+                # End the stream gracefully — the browser will retry
+            finally:
+                await upstream.aclose()
+                await client.aclose()
 
-            return StreamingResponse(
-                range_stream(),
-                status_code=upstream.status_code,
-                headers=response_headers,
-            )
+        return StreamingResponse(
+            range_stream(),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
 
     return StreamingResponse(
         stream_audio(),
