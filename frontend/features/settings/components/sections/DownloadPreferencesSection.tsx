@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { SettingsSection, SettingsRow, SettingsSelect } from "../ui";
 import { SystemSettings } from "../../types";
 
@@ -27,8 +28,21 @@ export function DownloadPreferencesSection({
         !!settings.tidalUserId;
 
     const configuredCount = [isLidarrConfigured, isSoulseekConfigured, isTidalConfigured].filter(Boolean).length;
-    const areMultipleServicesConfigured = configuredCount >= 2;
-    const isDisabled = !areMultipleServicesConfigured;
+    const isDisabled = configuredCount === 0;
+
+    // Auto-select the only configured service as the download source
+    useEffect(() => {
+        if (configuredCount === 1) {
+            const autoSource = isTidalConfigured
+                ? "tidal"
+                : isLidarrConfigured
+                    ? "lidarr"
+                    : "soulseek";
+            if (settings.downloadSource !== autoSource) {
+                onUpdate({ downloadSource: autoSource as "soulseek" | "lidarr" | "tidal" });
+            }
+        }
+    }, [configuredCount, isTidalConfigured, isLidarrConfigured, isSoulseekConfigured, settings.downloadSource, onUpdate]);
 
     // Build primary source options based on what's configured
     const getSourceOptions = () => {
@@ -67,7 +81,7 @@ export function DownloadPreferencesSection({
                 label="Primary Download Source"
                 description={
                     isDisabled
-                        ? "Requires at least 2 download services to be configured"
+                        ? "Requires at least one download service to be configured"
                         : "Choose how to download music for imported playlists"
                 }
             >
@@ -88,7 +102,7 @@ export function DownloadPreferencesSection({
                 label="When Primary Source Fails"
                 description={
                     isDisabled
-                        ? "Requires at least 2 download services to be configured"
+                        ? "Requires at least one download service to be configured"
                         : "What to do if a download fails with the primary source"
                 }
             >
