@@ -131,25 +131,31 @@ router.post("/search", requireAuth, async (req, res) => {
         await subscriber.connect();
 
         try {
-            // Set up response listener with timeout
+            // Set up response handling
+            let resolveEmbedding: (value: number[]) => void;
+            let rejectEmbedding: (reason: Error) => void;
             const embeddingPromise = new Promise<number[]>((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    reject(new Error("Text embedding request timed out"));
-                }, 30000);
+                resolveEmbedding = resolve;
+                rejectEmbedding = reject;
+            });
 
-                subscriber.subscribe(responseChannel, (message) => {
-                    clearTimeout(timeout);
-                    try {
-                        const data = JSON.parse(message);
-                        if (data.error) {
-                            reject(new Error(data.error));
-                        } else {
-                            resolve(data.embedding);
-                        }
-                    } catch (e) {
-                        reject(new Error("Invalid response from analyzer"));
+            const timeout = setTimeout(() => {
+                rejectEmbedding!(new Error("Text embedding request timed out"));
+            }, 30000);
+
+            // Subscribe and wait for Redis to confirm before publishing
+            await subscriber.subscribe(responseChannel, (message) => {
+                clearTimeout(timeout);
+                try {
+                    const data = JSON.parse(message);
+                    if (data.error) {
+                        rejectEmbedding!(new Error(data.error));
+                    } else {
+                        resolveEmbedding!(data.embedding);
                     }
-                });
+                } catch (e) {
+                    rejectEmbedding!(new Error("Invalid response from analyzer"));
+                }
             });
 
             // Publish the text embedding request

@@ -154,6 +154,7 @@ systems/
 reset-and-setup.sh
 organize-singles.sh
 COMMIT_MESSAGE.txt
+ISSUE_REVIEW.md
 backend/backend/
 postman/
 soularr/

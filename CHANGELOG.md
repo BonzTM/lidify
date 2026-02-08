@@ -5,6 +5,52 @@ All notable changes to Lidify will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-02-07
+
+### Added
+
+- **GPU acceleration:** CLAP vibe embeddings use GPU when available (NVIDIA Container Toolkit required); MusicCNN stays on CPU where it performs better due to small model size
+- **GPU documentation:** README section with install commands for NVIDIA Container Toolkit (Fedora/Nobara/RHEL and Ubuntu/Debian), docker-compose GPU config, and verification steps
+- **Model idle unloading:** Both MusicCNN and CLAP analyzers unload ML models after idle timeout, freeing 2-4 GB of RAM when not processing
+- **Immediate model unload:** Analyzers detect when all work is complete and unload models immediately instead of waiting for the idle timeout
+- **CLAP progress reporting:** Enrichment progress endpoint now includes CLAP processing count and queue length for accurate UI status
+- **Discovery similar artists:** Search discover endpoint returns musically similar artists (via Last.fm `getSimilar`) separately from text-match results
+- **Alias resolution banner:** UI banner shown when Last.fm resolves an artist name alias (e.g., "of mice" -> "Of Mice & Men")
+
+### Fixed
+
+- **Case-sensitive artist search ([#64](https://github.com/Chevron7Locked/lidify/issues/64)):** Added PostgreSQL tsvector search with ILIKE fallback; all artist/album/track searches are now case-insensitive
+- **Circuit breaker false trips:** Audio analysis cleanup circuit breaker now counts cleanup runs instead of individual tracks, preventing premature breaker trips on large batches of stale tracks
+- **DB reconciliation race condition:** Analyzer marks tracks as `processing` in the database before pushing to Redis queue, preventing the backend from double-queuing the same tracks
+- **Enrichment completion detection:** `isFullyComplete` now checks CLAP processing count and queue length, not just completed vs total
+- **Search special characters:** `queryToTsquery` strips non-word characters and filters empty terms, preventing PostgreSQL syntax errors on queries like `"&"` or `"..."`
+- **NaN pagination limit:** Search endpoints guard against `NaN` limit values from malformed query params
+- **Discovery cache key collisions:** Normalized cache keys (lowercase, trimmed, collapsed whitespace) prevent duplicate cache entries for equivalent queries
+- **Worker resize pool churn:** Added 5-second debounce to worker count changes from the UI slider, preventing rapid pool destroy/recreate cycles
+
+### Performance
+
+- **malloc_trim memory recovery:** Both analyzers call `malloc_trim(0)` after unloading models, forcing glibc to return freed pages to the OS (6.5 GB active -> 2.0 GB idle)
+- **MusicCNN worker pool auto-shutdown:** Worker pool shuts down when no pending work remains, freeing process pool memory without waiting for idle timeout
+- **Enrichment queue batch size:** Reduced from 50 to 10 to match analyzer batch size, preventing buildup of stale `processing` tracks
+- **Search with tsvector indexes:** Artist, album, and track tables now have generated tsvector columns with GIN indexes for fast full-text search
+- **Discovery endpoint parallelized:** Artist search, similar artists, and Deezer image lookups run concurrently instead of sequentially
+
+### Changed
+
+- **Audio streaming range parser:** Replaced Express `res.sendFile()` with custom range parser supporting suffix ranges (`bytes=-N`) and proper 416 responses -- fixes Firefox/Safari streaming issues on large FLAC files
+- **Similar artists separation:** Discovery results now split into `results` (text matches) and `similarArtists` (musically similar via Last.fm), replacing the mixed array
+- **Last.fm search tightened:** Removed `getSimilarArtists` padding from `searchArtists()` and raised fuzzy match threshold from 50 to 75 to reduce false positives (e.g., "Gothica" matching "Mothica")
+
+### Removed
+
+- Dead enrichment worker (`backend/src/workers/enrichment.ts`) and mood bucket worker (`backend/src/workers/moodBucketWorker.ts`) -- functionality consolidated into unified enrichment worker
+- Unused `useDebouncedValue` hook (replaced by `useDebounce` from search hooks)
+
+### Contributors
+
+- @Allram - Soulseek import fix ([#85](https://github.com/Chevron7Locked/lidify/pull/85))
+
 ## [1.4.1] - 2026-02-06
 
 ### Fixed

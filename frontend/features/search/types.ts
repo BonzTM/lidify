@@ -86,6 +86,21 @@ export interface DiscoverResult {
     listeners?: number;
 }
 
+export interface AliasInfo {
+    original: string;
+    canonical: string;
+    mbid?: string;
+}
+
+export interface DiscoverResponse {
+    results: DiscoverResult[];
+    aliasInfo: AliasInfo | null;
+}
+
+export interface SimilarArtistsResponse {
+    similarArtists: DiscoverResult[];
+}
+
 export interface SoulseekResult {
     username: string;
     path: string;

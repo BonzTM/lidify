@@ -6,34 +6,31 @@ import { api } from "@/lib/api";
 import { formatListeners } from "@/lib/format";
 
 interface SimilarArtistsGridProps {
-    discoverResults: DiscoverResult[];
+    similarArtists: DiscoverResult[];
 }
 
-// Always proxy images through the backend for caching and mobile compatibility
 const getProxiedImageUrl = (imageUrl: string | undefined): string | null => {
     if (!imageUrl) return null;
     return api.getCoverArtUrl(imageUrl, 200);
 };
 
 export function SimilarArtistsGrid({
-    discoverResults,
+    similarArtists,
 }: SimilarArtistsGridProps) {
-    const artistResults = discoverResults.filter((r) => r.type === "music");
-
-    if (artistResults.length <= 1) {
+    if (similarArtists.length === 0) {
         return null;
     }
 
     return (
         <section>
             <h2 className="text-2xl font-bold text-white mb-6">
-                Similar Artists
+                Related Artists
             </h2>
             <div
                 className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 3xl:grid-cols-10 gap-4"
                 data-tv-section="search-results-artists"
             >
-                {artistResults.slice(1, 7).map((result, index) => {
+                {similarArtists.map((result, index) => {
                     const artistId =
                         result.mbid || encodeURIComponent(result.name);
                     const imageUrl = getProxiedImageUrl(result.image);

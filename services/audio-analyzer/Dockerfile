@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     ffmpeg \
     curl \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
@@ -71,7 +72,7 @@ RUN curl -L -o /app/models/danceability-msd-musicnn-1.pb \
 RUN echo "Models downloaded:" && ls -lh /app/models/
 
 # Install other dependencies
-RUN pip3 install --no-cache-dir redis psycopg2-binary sqlalchemy python-dotenv 'numpy>=1.19.0,<2.0.0'
+RUN pip3 install --no-cache-dir redis psycopg2-binary 'numpy>=1.19.0,<2.0.0'
 
 # Copy application code
 COPY analyzer.py .
@@ -84,6 +85,6 @@ USER analyzer
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python3 -c "from essentia.standard import TensorflowPredictMusiCNN; print('OK')" || exit 1
+    CMD pgrep -f "python.*analyzer" || exit 1
 
 CMD ["python3", "analyzer.py"]

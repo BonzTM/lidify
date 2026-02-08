@@ -3,7 +3,6 @@ import { requireAuth, requireAuthOrToken } from "../middleware/auth";
 import { imageLimiter, apiLimiter } from "../middleware/rateLimiter";
 import { lastFmService } from "../services/lastfm";
 import { prisma, Prisma } from "../utils/db";
-import { getEnrichmentProgress } from "../workers/enrichment";
 import { redisClient } from "../utils/redis";
 import { logger } from "../utils/logger";
 import crypto from "crypto";
@@ -20,7 +19,6 @@ import { getSystemSettings } from "../utils/systemSettings";
 import { AudioStreamingService } from "../services/audioStreaming";
 import { scanQueue } from "../workers/queues";
 import { organizeSingles } from "../workers/organizeSingles";
-import { enrichSimilarArtist } from "../workers/artistEnrichment";
 import { extractColorsFromImage } from "../utils/colorExtractor";
 import { dataCacheService } from "../services/dataCache";
 import {
@@ -46,6 +44,23 @@ import {
 import { shuffleArray } from "../utils/shuffle";
 
 const router = Router();
+
+const ARTIST_SORT_MAP: Record<string, any> = {
+    "name": { name: "asc" as const },
+    "name-desc": { name: "desc" as const },
+    "tracks": { totalTrackCount: "desc" as const },
+};
+
+const ALBUM_SORT_MAP: Record<string, any> = {
+    "name": { title: "asc" as const },
+    "name-desc": { title: "desc" as const },
+    "recent": { year: "desc" as const },
+};
+
+const TRACK_SORT_MAP: Record<string, any> = {
+    "name": { title: "asc" as const },
+    "name-desc": { title: "desc" as const },
+};
 
 // Maximum items per request to prevent DoS attacks while supporting large libraries
 const MAX_LIMIT = 10000;
@@ -190,70 +205,6 @@ router.post("/organize", async (req, res) => {
     } catch (error) {
         logger.error("Organization trigger error:", error);
         res.status(500).json({ error: "Failed to start organization" });
-    }
-});
-
-// POST /library/artists/:id/enrich - Manually enrich artist metadata
-router.post("/artists/:id/enrich", async (req, res) => {
-    try {
-        const artist = await prisma.artist.findUnique({
-            where: { id: req.params.id },
-        });
-
-        if (!artist) {
-            return res.status(404).json({ error: "Artist not found" });
-        }
-
-        // Use enrichment functions
-
-        // Run enrichment in background
-        enrichSimilarArtist(artist).catch((err) => {
-            logger.error(`Failed to enrich artist ${artist.name}:`, err);
-        });
-
-        res.json({ message: "Artist enrichment started in background" });
-    } catch (error) {
-        logger.error("Enrich artist error:", error);
-        res.status(500).json({ error: "Failed to enrich artist" });
-    }
-});
-
-// GET /library/enrichment-progress - Get enrichment worker progress
-router.get("/enrichment-progress", async (req, res) => {
-    try {
-        const progress = await getEnrichmentProgress();
-        res.json(progress);
-    } catch (error) {
-        logger.error("Failed to get enrichment progress:", error);
-        res.status(500).json({ error: "Failed to get enrichment progress" });
-    }
-});
-
-// POST /library/re-enrich-all - Re-enrich all artists with missing images (no auth required for convenience)
-router.post("/re-enrich-all", async (req, res) => {
-    try {
-        // Reset all artists that have no heroUrl to "pending"
-        const result = await prisma.artist.updateMany({
-            where: {
-                OR: [{ heroUrl: null }, { heroUrl: "" }],
-            },
-            data: {
-                enrichmentStatus: "pending",
-                lastEnriched: null,
-            },
-        });
-
-        logger.debug(
-            ` Reset ${result.count} artists with missing images to pending`
-        );
-
-        res.json({
-            message: `Reset ${result.count} artists for re-enrichment`,
-            count: result.count,
-        });
-    } catch (error) {
-        logger.error("Failed to reset artists:", error);
-        res.status(500).json({ error: "Failed to reset artists" });
     }
 });
 
@@ -527,6 +478,7 @@ router.get("/artists", async (req, res) => {
             offset: offsetParam = "0",
             filter = "owned", // owned (default), discovery, all
             cursor, // Optional cursor for cursor-based pagination
+            sortBy = "name",
         } = req.query;
 
         const limit = Math.min(
@@ -534,6 +486,8 @@ router.get("/artists", async (req, res) => {
             MAX_LIMIT
         );
         const offset = parseInt(offsetParam as string, 10) || 0;
+
+        const orderBy = ARTIST_SORT_MAP[sortBy as string] ?? { name: "asc" as const };
 
         // Build WHERE clause using denormalized counts (fast indexed lookup)
         // This replaces the expensive OR with nested some conditions
@@ -569,7 +523,7 @@ router.get("/artists", async (req, res) => {
                 const findManyArgs: Parameters<typeof tx.artist.findMany>[0] = {
                     where,
                     take: limit,
-                    orderBy: { name: "asc" as const },
+                    orderBy,
                     select: {
                         id: true,
                         mbid: true,
@@ -648,113 +602,6 @@ router.get("/artists", async (req, res) => {
             error: "Failed to fetch artists",
             details: error?.message,
         });
-    }
-});
-
-// GET /library/enrichment-diagnostics - Debug why artist images aren't populating
-router.get("/enrichment-diagnostics", async (req, res) => {
-    try {
-        // Get enrichment status breakdown
-        const statusCounts = await prisma.artist.groupBy({
-            by: ["enrichmentStatus"],
-            _count: true,
-        });
-
-        // Get artists that completed enrichment but have no heroUrl
-        const completedNoImage = await prisma.artist.count({
-            where: {
-                enrichmentStatus: "completed",
-                OR: [{ heroUrl: null }, { heroUrl: "" }],
-            },
-        });
-
-        // Get artists with temp MBIDs (can't use Fanart.tv)
-        const tempMbidCount = await prisma.artist.count({
-            where: {
-                mbid: { startsWith: "temp-" },
-            },
-        });
-
-        // Sample of artists with issues
-        const problemArtists = await prisma.artist.findMany({
-            where: {
-                enrichmentStatus: "completed",
-                OR: [{ heroUrl: null }, { heroUrl: "" }],
-            },
-            select: {
-                id: true,
-                name: true,
-                mbid: true,
-                enrichmentStatus: true,
-                lastEnriched: true,
-            },
-            take: 10,
-        });
-
-        // Sample of failed artists
-        const failedArtists = await prisma.artist.findMany({
-            where: {
-                enrichmentStatus: "failed",
-            },
-            select: {
-                id: true,
-                name: true,
-                mbid: true,
-                lastEnriched: true,
-            },
-            take: 10,
-        });
-
-        res.json({
-            summary: {
-                statusBreakdown: statusCounts.reduce((acc, s) => {
-                    acc[s.enrichmentStatus || "unknown"] = s._count;
-                    return acc;
-                }, {} as Record<string, number>),
-                completedWithoutImage: completedNoImage,
-                tempMbidArtists: tempMbidCount,
-            },
-            problemArtists,
-            failedArtists,
-            suggestions: [
-                completedNoImage > 0
-                    ? `${completedNoImage} artists completed enrichment but have no image - external APIs may be failing or rate limited`
-                    : null,
-                tempMbidCount > 0
-                    ? `${tempMbidCount} artists have temp MBIDs - Fanart.tv won't work for them, relies on Deezer/Last.fm`
-                    : null,
-                statusCounts.find((s) => s.enrichmentStatus === "pending")
-                    ?._count
-                    ? "Enrichment still in progress - check logs"
-                    : null,
-                statusCounts.find((s) => s.enrichmentStatus === "failed")
-                    ?._count
-                    ? "Some artists failed enrichment - may need retry"
-                    : null,
-            ].filter(Boolean),
-        });
-    } catch (error: any) {
-        logger.error("[Library] Enrichment diagnostics error:", error?.message);
-        res.status(500).json({ error: "Failed to get diagnostics" });
-    }
-});
-
-// POST /library/retry-enrichment - Retry failed enrichments
-router.post("/retry-enrichment", async (req, res) => {
-    try {
-        // Reset failed artists to pending so worker picks them up
-        const result = await prisma.artist.updateMany({
-            where: { enrichmentStatus: "failed" },
-            data: { enrichmentStatus: "pending" },
-        });
-
-        res.json({
-            message: `Reset ${result.count} failed artists to pending`,
-            count: result.count,
-        });
-    } catch (error: any) {
-        logger.error("[Library] Retry enrichment error:", error?.message);
-        res.status(500).json({ error: "Failed to retry enrichment" });
     }
 });
 
@@ -1554,12 +1401,15 @@ router.get("/albums", async (req, res) => {
             limit: limitParam = "500",
             offset: offsetParam = "0",
             filter = "owned", // owned (default), discovery, all
+            sortBy = "name",
         } = req.query;
         const limit = Math.min(
             parseInt(limitParam as string, 10) || 500,
             MAX_LIMIT
         );
         const offset = parseInt(offsetParam as string, 10) || 0;
+
+        const orderBy = ALBUM_SORT_MAP[sortBy as string] ?? { title: "asc" as const };
 
         let where: any = {
             tracks: { some: {} }, // Only albums with tracks
@@ -1600,7 +1450,7 @@ router.get("/albums", async (req, res) => {
                 where,
                 skip: offset,
                 take: limit,
-                orderBy: { year: "desc" },
+                orderBy,
                 include: {
                     artist: {
                         select: {
@@ -1699,12 +1549,20 @@ router.get("/tracks", async (req, res) => {
             albumId,
             limit: limitParam = "100",
             offset: offsetParam = "0",
+            sortBy = "name",
         } = req.query;
         const limit = Math.min(
             parseInt(limitParam as string, 10) || 100,
             MAX_LIMIT
         );
         const offset = parseInt(offsetParam as string, 10) || 0;
+
+        let orderBy: any;
+        if (albumId) {
+            orderBy = { trackNo: "asc" as const };
+        } else {
+            orderBy = TRACK_SORT_MAP[sortBy as string] ?? { title: "asc" as const };
+        }
 
         const where: any = {};
         if (albumId) {
@@ -1716,7 +1574,7 @@ router.get("/tracks", async (req, res) => {
                 where,
                 skip: offset,
                 take: limit,
-                orderBy: albumId ? { trackNo: "asc" } : { id: "desc" },
+                orderBy,
                 include: {
                     album: {
                         include: {

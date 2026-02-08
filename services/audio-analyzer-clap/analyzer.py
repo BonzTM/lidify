@@ -25,6 +25,7 @@ import signal
 import json
 import time
 import logging
+import gc
 import threading
 from datetime import datetime
 from typing import Optional, Tuple
@@ -69,6 +70,7 @@ MUSIC_PATH = os.getenv('MUSIC_PATH', '/music')
 SLEEP_INTERVAL = int(os.getenv('SLEEP_INTERVAL', '5'))
 NUM_WORKERS = int(os.getenv('NUM_WORKERS', '2'))
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://backend:3006')
+MODEL_IDLE_TIMEOUT = int(os.getenv('MODEL_IDLE_TIMEOUT', '300'))
 
 # Queue and channel names
 ANALYSIS_QUEUE = 'audio:clap:queue'
@@ -90,39 +92,70 @@ class CLAPAnalyzer:
     LAION CLAP model wrapper for generating audio and text embeddings.
 
     Uses HTSAT-base architecture with the music_audioset checkpoint,
-    optimized for music similarity tasks.
+    optimized for music similarity tasks. Supports idle model unloading
+    to free memory when no work is pending.
     """
 
     def __init__(self):
         self.model = None
         self._lock = threading.Lock()
+        self.last_work_time: float = time.time()
+        self._model_loaded = False
 
     def load_model(self):
-        """Load the CLAP model (call once, share across workers)"""
-        if self.model is not None:
-            return
+        """Load the CLAP model (thread-safe, idempotent)"""
+        with self._lock:
+            if self.model is not None:
+                return
 
-        logger.info("Loading LAION CLAP model...")
-        try:
-            import laion_clap
+            logger.info("Loading LAION CLAP model...")
+            try:
+                import laion_clap
 
-            self.model = laion_clap.CLAP_Module(
-                enable_fusion=False,
-                amodel='HTSAT-base'
-            )
-            self.model.load_ckpt('/app/models/music_audioset_epoch_15_esc_90.14.pt')
+                self.model = laion_clap.CLAP_Module(
+                    enable_fusion=False,
+                    amodel='HTSAT-base'
+                )
+                self.model.load_ckpt('/app/models/music_audioset_epoch_15_esc_90.14.pt')
 
-            # Move to detected device (GPU if available, else CPU)
-            self.model = self.model.to(DEVICE).eval()
+                # Move to detected device (GPU if available, else CPU)
+                self.model = self.model.to(DEVICE).eval()
+                self._model_loaded = True
+                self.last_work_time = time.time()
 
-            if GPU_NAME:
-                logger.info(f"CLAP model loaded successfully on GPU: {GPU_NAME}")
-            else:
-                logger.info("CLAP model loaded successfully on CPU")
-        except Exception as e:
-            logger.error(f"Failed to load CLAP model: {e}")
-            traceback.print_exc()
-            raise
+                if GPU_NAME:
+                    logger.info(f"CLAP model loaded successfully on GPU: {GPU_NAME}")
+                else:
+                    logger.info("CLAP model loaded successfully on CPU")
+            except Exception as e:
+                logger.error(f"Failed to load CLAP model: {e}")
+                traceback.print_exc()
+                raise
+
+    def unload_model(self):
+        """Unload the CLAP model to free memory"""
+        with self._lock:
+            if self.model is None:
+                return
+            logger.info("Unloading CLAP model to free memory...")
+            self.model = None
+            self._model_loaded = False
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+            # Force glibc to return freed pages to OS (Python/PyTorch hold RSS otherwise)
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
+            logger.info("CLAP model unloaded")
+
+    def ensure_model(self):
+        """Ensure model is loaded, reloading if it was unloaded for idle"""
+        if self.model is None:
+            logger.info("Reloading CLAP model (new work arrived)...")
+            self.load_model()
 
     def _load_audio_chunk(self, audio_path: str, duration_hint: Optional[float] = None) -> Tuple[Optional[np.ndarray], int]:
         """
@@ -177,8 +210,8 @@ class CLAPAnalyzer:
         Returns:
             numpy array of shape (512,) or None on error
         """
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
+        self.ensure_model()
+        self.last_work_time = time.time()
 
         if not os.path.exists(audio_path):
             logger.error(f"Audio file not found: {audio_path}")
@@ -224,8 +257,8 @@ class CLAPAnalyzer:
         Returns:
             numpy array of shape (512,) or None on error
         """
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
+        self.ensure_model()
+        self.last_work_time = time.time()
 
         if not text or not text.strip():
             logger.error("Empty text provided for embedding")
@@ -659,6 +692,7 @@ def main():
     logger.info(f"  Num workers: {NUM_WORKERS}")
     logger.info(f"  Threads per worker: {THREADS_PER_WORKER}")
     logger.info(f"  Sleep interval: {SLEEP_INTERVAL}s")
+    logger.info(f"  Model idle timeout: {MODEL_IDLE_TIMEOUT}s")
     logger.info("=" * 60)
 
     # Load model once (shared across all workers)
@@ -702,13 +736,41 @@ def main():
     threads.append(control_thread)
     logger.info("Started control handler thread")
 
-    # Wait for shutdown signal
+    # Main loop: monitor idle state and unload model when not needed
+    idle_db = DatabaseConnection(DATABASE_URL)
+    idle_db.connect()
     try:
         while not stop_event.is_set():
-            time.sleep(1)
+            time.sleep(5)
+            if analyzer._model_loaded:
+                idle_seconds = time.time() - analyzer.last_work_time
+                if idle_seconds >= MODEL_IDLE_TIMEOUT > 0:
+                    analyzer.unload_model()
+                    logger.info(f"Model idle for {idle_seconds:.0f}s, unloaded to free memory (will reload when work arrives)")
+                elif idle_seconds >= SLEEP_INTERVAL * 2:
+                    # Check if all work is truly done -- unload immediately
+                    try:
+                        cursor = idle_db.get_cursor()
+                        cursor.execute("""
+                            SELECT COUNT(*) as cnt FROM "Track" t
+                            LEFT JOIN track_embeddings te ON t.id = te.track_id
+                            WHERE te.track_id IS NULL AND t."filePath" IS NOT NULL
+                        """)
+                        remaining = cursor.fetchone()['cnt']
+                        cursor.close()
+                        queue_len = redis.from_url(REDIS_URL).llen(ANALYSIS_QUEUE)
+                        if remaining == 0 and queue_len == 0:
+                            analyzer.unload_model()
+                            logger.info("All tracks have embeddings, model unloaded (will reload when work arrives)")
+                    except Exception as e:
+                        logger.debug(f"Idle check failed: {e}")
+                        idle_db.reconnect()
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
         stop_event.set()
+
+    # Cleanup
+    idle_db.close()
 
     # Wait for threads to finish
     logger.info("Waiting for threads to finish...")

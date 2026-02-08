@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import type { SoulseekResult } from "../types";
@@ -19,26 +19,19 @@ interface UseSoulseekSearchReturn {
 export function useSoulseekSearch({
     query,
 }: UseSoulseekSearchProps): UseSoulseekSearchReturn {
-    const [soulseekResults, setSoulseekResults] = useState<SoulseekResult[]>(
-        [],
-    );
+    const [soulseekResults, setSoulseekResults] = useState<SoulseekResult[]>([]);
     const [isSoulseekSearching, setIsSoulseekSearching] = useState(false);
     const [isSoulseekPolling, setIsSoulseekPolling] = useState(false);
-    const [, setSoulseekSearchId] = useState<string | null>(
-        null,
-    );
     const [soulseekEnabled, setSoulseekEnabled] = useState(false);
-    const [downloadingFiles, setDownloadingFiles] = useState<Set<string>>(
-        new Set(),
-    );
+    const [downloadingFiles, setDownloadingFiles] = useState<Set<string>>(new Set());
 
-    // Check if Soulseek is configured (has credentials)
-    // Use the public /soulseek/status endpoint instead of admin-only /system-settings
+    const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const abortRef = useRef<AbortController | null>(null);
+
     useEffect(() => {
         const checkSoulseekStatus = async () => {
             try {
                 const status = await api.getSlskdStatus();
-                // The status endpoint returns { enabled: boolean, connected: boolean }
                 setSoulseekEnabled(Boolean(status.enabled));
             } catch (error) {
                 console.error("Failed to check Soulseek status:", error);
@@ -53,62 +46,83 @@ export function useSoulseekSearch({
     useEffect(() => {
         if (!query.trim() || !soulseekEnabled) {
             setSoulseekResults([]);
-            setSoulseekSearchId(null);
             return;
         }
 
-        let pollInterval: NodeJS.Timeout | null = null;
+        const abortController = new AbortController();
+        abortRef.current = abortController;
+
+        const cleanup = () => {
+            abortController.abort();
+            if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+            }
+            setIsSoulseekPolling(false);
+        };
 
         const timer = setTimeout(async () => {
+            if (abortController.signal.aborted) return;
+
             setIsSoulseekSearching(true);
             setIsSoulseekPolling(true);
 
             try {
                 const { searchId } = await api.searchSoulseek(query);
-                setSoulseekSearchId(searchId);
+                if (abortController.signal.aborted) return;
+
                 setSoulseekResults([]);
 
-                // Poll for results - Soulseek search takes ~45 seconds to complete
-                // Poll for up to 60 seconds to ensure we catch results
+                // Wait 3 seconds before polling (give search time to collect)
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                if (abortController.signal.aborted) return;
+
+                setIsSoulseekSearching(false);
+
                 let pollCount = 0;
                 const maxPolls = 30; // 30 polls * 2s = 60 seconds max
 
-                // Wait 3 seconds before starting to poll (give search time to start collecting)
-                await new Promise((resolve) => setTimeout(resolve, 3000));
-                setIsSoulseekSearching(false); // Initial search request complete
+                pollIntervalRef.current = setInterval(async () => {
+                    if (abortController.signal.aborted) {
+                        if (pollIntervalRef.current) {
+                            clearInterval(pollIntervalRef.current);
+                            pollIntervalRef.current = null;
+                        }
+                        return;
+                    }
 
-                pollInterval = setInterval(async () => {
                     try {
-                        const { results } =
-                            await api.getSoulseekResults(searchId);
+                        const { results } = await api.getSoulseekResults(searchId);
+
+                        if (abortController.signal.aborted) return;
 
                         if (results && results.length > 0) {
                             setSoulseekResults(results);
-                            // If we have enough results, we can stop polling early
                             if (results.length >= 10) {
-                                if (pollInterval) clearInterval(pollInterval);
+                                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                                pollIntervalRef.current = null;
                                 setIsSoulseekPolling(false);
                             }
                         }
 
                         pollCount++;
-
                         if (pollCount >= maxPolls) {
-                            if (pollInterval) clearInterval(pollInterval);
+                            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                            pollIntervalRef.current = null;
                             setIsSoulseekPolling(false);
                         }
                     } catch (error) {
+                        if (abortController.signal.aborted) return;
                         console.error("Error polling Soulseek results:", error);
-                        if (pollInterval) clearInterval(pollInterval);
+                        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
                         setIsSoulseekPolling(false);
                     }
                 }, 2000);
             } catch (error) {
+                if (abortController.signal.aborted) return;
                 console.error("Soulseek search error:", error);
-                if (
-                    error instanceof Error &&
-                    error.message?.includes("not enabled")
-                ) {
+                if (error instanceof Error && error.message?.includes("not enabled")) {
                     setSoulseekEnabled(false);
                 }
                 setIsSoulseekSearching(false);
@@ -118,14 +132,10 @@ export function useSoulseekSearch({
 
         return () => {
             clearTimeout(timer);
-            if (pollInterval) {
-                clearInterval(pollInterval);
-            }
-            setIsSoulseekPolling(false);
+            cleanup();
         };
     }, [query, soulseekEnabled]);
 
-    // Handle downloads
     const handleDownload = useCallback(async (result: SoulseekResult) => {
         try {
             setDownloadingFiles((prev) => new Set([...prev, result.filename]));
@@ -140,12 +150,9 @@ export function useSoulseekSearch({
                 result.parsedTitle,
             );
 
-            // Use the activity sidebar (Active tab) instead of a toast/modal
             if (typeof window !== "undefined") {
                 window.dispatchEvent(
-                    new CustomEvent("set-activity-panel-tab", {
-                        detail: { tab: "active" },
-                    }),
+                    new CustomEvent("set-activity-panel-tab", { detail: { tab: "active" } }),
                 );
                 window.dispatchEvent(new CustomEvent("open-activity-panel"));
                 window.dispatchEvent(new CustomEvent("notifications-changed"));
@@ -161,9 +168,7 @@ export function useSoulseekSearch({
         } catch (error) {
             console.error("Download error:", error);
             const message =
-                error instanceof Error ?
-                    error.message
-                :   "Failed to start download";
+                error instanceof Error ? error.message : "Failed to start download";
             toast.error(message);
             setDownloadingFiles((prev) => {
                 const newSet = new Set(prev);

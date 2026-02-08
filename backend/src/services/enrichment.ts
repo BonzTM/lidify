@@ -37,14 +37,6 @@ export interface EnrichmentSettings {
     matchingConfidence: "strict" | "moderate" | "loose";
 }
 
-export interface EnrichmentResult {
-    success: boolean;
-    itemsProcessed: number;
-    itemsEnriched: number;
-    itemsFailed: number;
-    errors: Array<{ item: string; error: string }>;
-}
-
 export interface ArtistEnrichmentData {
     mbid?: string;
     bio?: string;
@@ -68,14 +60,6 @@ export interface AlbumEnrichmentData {
     confidence: number;
 }
 
-export interface TrackEnrichmentData {
-    mbid?: string;
-    duration?: number;
-    genres?: string[];
-    lyrics?: string;
-    confidence: number;
-}
-
 export class EnrichmentService {
     private defaultSettings: EnrichmentSettings = {
         enabled: false, // Opt-in by default
@@ -92,9 +76,6 @@ export class EnrichmentService {
         overwriteExisting: false,
         matchingConfidence: "moderate",
     };
-
-    private requestQueue: Array<() => Promise<any>> = [];
-    private isProcessingQueue = false;
 
     /**
      * Get enrichment settings for a user
@@ -223,9 +204,13 @@ export class EnrichmentService {
                     );
 
                     // Get similar artists
+                    const artistMbidForSimilar = enrichmentData.mbid || artist.mbid;
                     const similar = await lastFmService.getSimilarArtists(
+                        artistMbidForSimilar && !artistMbidForSimilar.startsWith("temp-")
+                            ? artistMbidForSimilar
+                            : "",
                         artist.name,
-                        "10"
+                        10
                     );
                     enrichmentData.similarArtists = similar.map(
                         (a: any) => a.name
@@ -553,140 +538,6 @@ export class EnrichmentService {
         }
     }
 
-    /**
-     * Enrich entire library for a user
-     */
-    async enrichLibrary(
-        userId: string,
-        onProgress?: (progress: {
-            current: number;
-            total: number;
-            item: string;
-        }) => void
-    ): Promise<EnrichmentResult> {
-        const settings = await this.getSettings(userId);
-        if (!settings.enabled) {
-            throw new Error("Enrichment is not enabled for this user");
-        }
-
-        const result: EnrichmentResult = {
-            success: true,
-            itemsProcessed: 0,
-            itemsEnriched: 0,
-            itemsFailed: 0,
-            errors: [],
-        };
-
-        // Get all artists with their albums
-        const artists = await prisma.artist.findMany({
-            where: {
-                albums: {
-                    some: {}, // Only artists with albums
-                },
-            },
-            select: {
-                id: true,
-                name: true,
-                albums: {
-                    select: { id: true, title: true },
-                },
-            },
-        });
-
-        logger.debug(`Starting enrichment for ${artists.length} artists...`);
-
-        for (const artist of artists) {
-            try {
-                result.itemsProcessed++;
-                onProgress?.({
-                    current: result.itemsProcessed,
-                    total:
-                        artists.length +
-                        artists.reduce((sum, a) => sum + a.albums.length, 0),
-                    item: `${artist.name}`,
-                });
-
-                // Enrich artist
-                const artistEnrichmentData = await this.enrichArtist(
-                    artist.id,
-                    settings
-                );
-                if (
-                    artistEnrichmentData &&
-                    artistEnrichmentData.confidence > 0.3
-                ) {
-                    await this.applyArtistEnrichment(
-                        artist.id,
-                        artistEnrichmentData
-                    );
-                    result.itemsEnriched++;
-                }
-
-                // Enrich all albums for this artist
-                for (const album of artist.albums) {
-                    try {
-                        result.itemsProcessed++;
-                        onProgress?.({
-                            current: result.itemsProcessed,
-                            total:
-                                artists.length +
-                                artists.reduce(
-                                    (sum, a) => sum + a.albums.length,
-                                    0
-                                ),
-                            item: `${artist.name} - ${album.title}`,
-                        });
-
-                        const albumEnrichmentData = await this.enrichAlbum(
-                            album.id,
-                            settings
-                        );
-                        if (
-                            albumEnrichmentData &&
-                            albumEnrichmentData.confidence > 0.3
-                        ) {
-                            await this.applyAlbumEnrichment(
-                                album.id,
-                                albumEnrichmentData
-                            );
-                            result.itemsEnriched++;
-                        }
-
-                        // Rate limiting between albums
-                        await new Promise((resolve) =>
-                            setTimeout(resolve, 500)
-                        );
-                    } catch (error: any) {
-                        result.itemsFailed++;
-                        result.errors.push({
-                            item: `${artist.name} - ${album.title}`,
-                            error: error.message,
-                        });
-                        logger.error(
-                            `  ✗ Failed to enrich ${artist.name} - ${album.title}:`,
-                            error
-                        );
-                    }
-                }
-
-                // Rate limiting between artists
-                await new Promise((resolve) => setTimeout(resolve, 1000));
-            } catch (error: any) {
-                result.itemsFailed++;
-                result.errors.push({
-                    item: artist.name,
-                    error: error.message,
-                });
-                logger.error(` Failed to enrich ${artist.name}:`, error);
-            }
-        }
-
-        logger.debug(
-            `Enrichment complete: ${result.itemsEnriched}/${result.itemsProcessed} items enriched`
-        );
-
-        return result;
-    }
 }
 
 export const enrichmentService = new EnrichmentService();
