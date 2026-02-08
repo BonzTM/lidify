@@ -11,6 +11,8 @@ export function useArtistData() {
     const id = params.id as string;
     const { downloadStatus } = useDownloadContext();
     const prevActiveCountRef = useRef(downloadStatus.activeDownloads.length);
+    const retryCountRef = useRef(0);
+    const MAX_DISCOGRAPHY_RETRIES = 3;
 
     // Use React Query - no polling needed, webhook events trigger refresh via download context
     const {
@@ -29,9 +31,44 @@ export function useArtistData() {
             }
         },
         enabled: !!id,
-        staleTime: 10 * 60 * 1000,
+        staleTime: (query) => {
+            // If discography failed to load, mark as immediately stale
+            // so it re-fetches on next mount/navigation
+            const data = query.state.data as any;
+            if (data?.discographyComplete === false) return 0;
+            return 10 * 60 * 1000;
+        },
         retry: 1,
     });
+
+    // If discography was incomplete (MusicBrainz failed), automatically retry
+    // with exponential backoff up to MAX_DISCOGRAPHY_RETRIES times
+    useEffect(() => {
+        if (!artist || isLoading) return;
+
+        // Only retry for library artists where discography fetch failed
+        const isLibrary = artist.id && !artist.id.includes("-");
+        if (!isLibrary) return;
+
+        if (artist.discographyComplete === false && retryCountRef.current < MAX_DISCOGRAPHY_RETRIES) {
+            const delay = Math.min(2000 * Math.pow(2, retryCountRef.current), 10000);
+            const timeoutId = setTimeout(() => {
+                retryCountRef.current += 1;
+                refetch();
+            }, delay);
+            return () => clearTimeout(timeoutId);
+        }
+
+        // Reset retry count when we get complete data or switch artists
+        if (artist.discographyComplete !== false) {
+            retryCountRef.current = 0;
+        }
+    }, [artist, isLoading, refetch]);
+
+    // Reset retry counter when navigating to a different artist
+    useEffect(() => {
+        retryCountRef.current = 0;
+    }, [id]);
 
     // Refetch when downloads complete (active count decreases)
     useEffect(() => {
