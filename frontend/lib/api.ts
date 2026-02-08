@@ -479,6 +479,7 @@ class ApiClient {
         limit?: number;
         offset?: number;
         filter?: "owned" | "discovery" | "all";
+        sortBy?: string;
     }) {
         return this.request<{
             artists: ApiData[];
