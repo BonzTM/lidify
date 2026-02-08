@@ -16,7 +16,7 @@ import { getSystemSettings } from "../utils/systemSettings";
 
 // ── Sidecar URL ────────────────────────────────────────────────────
 const YTMUSIC_STREAMER_URL =
-    process.env.YTMUSIC_STREAMER_URL || "http://ytmusic-streamer:8586";
+    process.env.YTMUSIC_STREAMER_URL || "http://127.0.0.1:8586";
 
 // ── Types ──────────────────────────────────────────────────────────
 
