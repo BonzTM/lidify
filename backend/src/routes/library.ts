@@ -840,6 +840,9 @@ router.get("/artists/:id", async (req, res) => {
             }
         }
 
+        // Track whether we successfully loaded the full discography
+        let discographyComplete = false;
+
         // Albums from database have actual tracks on disk - they MUST show as owned
         const dbAlbums = artist.albums.map((album) => ({
             ...album,
@@ -986,13 +989,16 @@ router.get("/artists/:id", async (req, res) => {
                         albumsWithOwnership.filter((a) => !a.owned).length
                     }`
                 );
+                discographyComplete = true;
             } catch (error) {
                 logger.error(`Failed to fetch MusicBrainz discography:`, error);
-                // Just use database albums
+                // Just use database albums - discographyComplete stays false
                 albumsWithOwnership = dbAlbums;
             }
         } else {
             // No valid MBID - just use database albums
+            // Still mark as complete since there's nothing more to fetch
+            discographyComplete = true;
             logger.debug(
                 `[Artist] No valid MBID, using ${dbAlbums.length} albums from database`
             );
@@ -1386,6 +1392,7 @@ router.get("/artists/:id", async (req, res) => {
             albums: albumsWithOwnership,
             topTracks,
             similarArtists,
+            discographyComplete,
         });
     } catch (error) {
         logger.error("Get artist error:", error);
