@@ -43,6 +43,9 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                         !track.album?.id ||
                         !track.album?.title ||
                         track.album.title === "Unknown Album";
+                    const isYtMusic =
+                        track.streamSource === "youtube" &&
+                        !!track.youtubeVideoId;
                     const coverUrl = track.album?.coverArt
                         ? api.getCoverArtUrl(track.album.coverArt, 80)
                         : null;
@@ -59,7 +62,9 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                 isPlaying && "bg-white/10"
                             )}
                             onClick={(e) => {
-                                if (isUnowned) {
+                                if (isYtMusic) {
+                                    onPlayTrack(track);
+                                } else if (isUnowned) {
                                     onPreview(track, e);
                                 } else {
                                     onPlayTrack(track);
@@ -115,11 +120,15 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                         <span className="truncate">
                                             {track.displayTitle ?? track.title}
                                         </span>
-                                        {isUnowned && (
+                                        {isYtMusic ? (
+                                            <span className="shrink-0 text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-medium">
+                                                YT MUSIC
+                                            </span>
+                                        ) : isUnowned ? (
                                             <span className="shrink-0 text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-medium">
                                                 PREVIEW
                                             </span>
-                                        )}
+                                        ) : null}
                                     </div>
                                     <p className="text-xs text-gray-400 truncate">
                                         {artist.name}
@@ -140,7 +149,7 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
 
                             {/* Duration + Preview */}
                             <div className="flex items-center justify-end gap-2">
-                                {isUnowned && (
+                                {isUnowned && !isYtMusic && (
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
