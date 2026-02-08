@@ -16,6 +16,7 @@ import {
     ChevronUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useDownloadContext } from "@/lib/download-context";
 import { useToast } from "@/lib/toast-context";
 
 // Types for Spotify Import
@@ -103,6 +104,7 @@ function SpotifyImportPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { toast } = useToast();
+    const { downloadsEnabled } = useDownloadContext();
     const hasAutoFetched = useRef(false);
 
     // State
@@ -506,6 +508,7 @@ function SpotifyImportPageContent() {
                                     In Library
                                 </div>
                             </div>
+                            {downloadsEnabled && (
                             <div className="text-center py-3 bg-[#1DB954]/10 rounded-lg">
                                 <div className="text-xl font-bold text-[#1DB954]">
                                     {
@@ -518,6 +521,7 @@ function SpotifyImportPageContent() {
                                     To Download
                                 </div>
                             </div>
+                            )}
                             {preview.summary.notFound > 0 ? (
                                 <div className="text-center py-3 bg-red-500/10 rounded-lg">
                                     <div className="text-xl font-bold text-red-400">
@@ -610,7 +614,7 @@ function SpotifyImportPageContent() {
                         )}
 
                         {/* Albums to download */}
-                        {preview.albumsToDownload.filter((a) => a.albumMbid)
+                        {downloadsEnabled && preview.albumsToDownload.filter((a) => a.albumMbid)
                             .length > 0 && (
                             <div className="bg-white/5 rounded-lg overflow-hidden">
                                 <button
@@ -831,8 +835,10 @@ function SpotifyImportPageContent() {
                                     `Import ${preview.summary.inLibrary} songs`
                                 ) : selectedAlbums.size > 0 ? (
                                     `Download ${selectedAlbums.size} albums`
-                                ) : (
+                                ) : downloadsEnabled ? (
                                     "Select albums to download"
+                                ) : (
+                                    "No songs to import"
                                 )}
                             </button>
                         </div>

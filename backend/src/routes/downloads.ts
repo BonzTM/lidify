@@ -7,6 +7,7 @@ import { getSystemSettings } from "../utils/systemSettings";
 import { lidarrService } from "../services/lidarr";
 import { soulseekService } from "../services/soulseek";
 import { tidalService } from "../services/tidal";
+import { soulseekService } from "../services/soulseek";
 import { musicBrainzService } from "../services/musicbrainz";
 import { lastFmService } from "../services/lastfm";
 import { simpleDownloadManager } from "../services/simpleDownloadManager";
@@ -34,6 +35,29 @@ router.get("/availability", async (req, res) => {
             lidarr: lidarrEnabled,
             soulseek: soulseekAvailable,
             tidal: tidalAvailable,
+        });
+    } catch (error: any) {
+        logger.error("Download availability check error:", error.message);
+        res.status(500).json({ error: "Failed to check download availability" });
+    }
+});
+
+/**
+ * GET /downloads/availability
+ * Check whether any download service (Lidarr or Soulseek) is configured and enabled.
+ * Non-admin endpoint — any authenticated user can check.
+ */
+router.get("/availability", async (req, res) => {
+    try {
+        const [lidarrEnabled, soulseekAvailable] = await Promise.all([
+            lidarrService.isEnabled(),
+            soulseekService.isAvailable(),
+        ]);
+
+        res.json({
+            enabled: lidarrEnabled || soulseekAvailable,
+            lidarr: lidarrEnabled,
+            soulseek: soulseekAvailable,
         });
     } catch (error: any) {
         logger.error("Download availability check error:", error.message);

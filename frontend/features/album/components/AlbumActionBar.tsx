@@ -18,6 +18,7 @@ interface AlbumActionBarProps {
     isPlaying?: boolean;
     isPlayingThisAlbum?: boolean;
     onPause?: () => void;
+    downloadsEnabled?: boolean;
 }
 
 export function AlbumActionBar({
@@ -32,9 +33,10 @@ export function AlbumActionBar({
     isPlaying = false,
     isPlayingThisAlbum = false,
     onPause,
+    downloadsEnabled = true,
 }: AlbumActionBarProps) {
     const isOwned = album.owned !== undefined ? album.owned : source === "library";
-    const showDownload = !isOwned && (album.mbid || album.rgMbid);
+    const showDownload = downloadsEnabled && !isOwned && (album.mbid || album.rgMbid);
     const showPause = isPlaying && isPlayingThisAlbum;
 
     const handlePlayPauseClick = () => {

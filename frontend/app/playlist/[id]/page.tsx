@@ -12,6 +12,7 @@ import { formatTime } from "@/utils/formatTime";
 import { usePlaylistQuery } from "@/hooks/useQueries";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/lib/toast-context";
+import { useDownloadContext } from "@/lib/download-context";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import {
     Play,
@@ -137,6 +138,7 @@ export default function PlaylistDetailPage() {
     };
 
     // Handle retry download for pending track
+    const { downloadsEnabled } = useDownloadContext();
     const handleRetryPendingTrack = async (pendingId: string) => {
         setRetryingTrackId(pendingId);
         try {
@@ -650,6 +652,7 @@ export default function PlaylistDetailPage() {
                                                         Failed
                                                     </span>
                                                     {/* Retry button */}
+                                                    {downloadsEnabled && (
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
@@ -672,6 +675,7 @@ export default function PlaylistDetailPage() {
                                                             <RefreshCw className="w-4 h-4" />
                                                         )}
                                                     </button>
+                                                    )}
                                                     {/* Remove button */}
                                                     {playlist.isOwner && (
                                                         <button

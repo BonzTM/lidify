@@ -45,7 +45,7 @@ export default function AlbumPage({ params }: AlbumPageProps) {
     const { album, source, loading, reloadAlbum } = useAlbumData(id);
     const { playAlbum, shufflePlay, addToQueue, downloadAlbum } =
         useAlbumActions();
-    const { isPendingByMbid } = useDownloadContext();
+    const { isPendingByMbid, downloadsEnabled } = useDownloadContext();
     const { previewTrack, previewPlaying, handlePreview } = useTrackPreview();
 
     // Get cover URL for display and color extraction
@@ -154,6 +154,7 @@ export default function AlbumPage({ params }: AlbumPageProps) {
                     isPlaying={isPlaying}
                     isPlayingThisAlbum={currentTrack?.album?.id === album.id}
                     onPause={pause}
+                    downloadsEnabled={downloadsEnabled}
                 />
             </AlbumHero>
 
