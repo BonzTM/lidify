@@ -89,8 +89,14 @@ export function AudioPlaybackProvider({ children }: { children: ReactNode }) {
             const machineIsPlaying = ctx.state === "PLAYING";
             const machineIsBuffering = ctx.state === "BUFFERING" || ctx.state === "LOADING";
 
-            // Only update if different to prevent unnecessary renders
-            setIsPlaying((prev) => prev !== machineIsPlaying ? machineIsPlaying : prev);
+            // During LOADING, don't override isPlaying — preserve the play
+            // intent that playTracks()/playTrack() set so the load-complete
+            // handler knows to auto-play.  Without this guard the subscriber
+            // forces isPlaying=false (LOADING ≠ PLAYING), which causes the
+            // "click play twice" bug: the first click loads but never plays.
+            if (ctx.state !== "LOADING") {
+                setIsPlaying((prev) => prev !== machineIsPlaying ? machineIsPlaying : prev);
+            }
             setIsBuffering((prev) => prev !== machineIsBuffering ? machineIsBuffering : prev);
 
             // Update error state
