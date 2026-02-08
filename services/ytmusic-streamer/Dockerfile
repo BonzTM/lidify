@@ -27,9 +27,12 @@ COPY app.py .
 
 # Create writable directories and non-root user
 # - /data: ytmusicapi OAuth token storage
+# chmod 777 ensures compatibility with pre-existing Docker volumes that may
+# have been created with root ownership before the non-root user was added.
 RUN useradd -m -u 1000 ytmusic && \
     mkdir -p /data && \
-    chown -R ytmusic:ytmusic /app /data
+    chown -R ytmusic:ytmusic /app /data && \
+    chmod 777 /data
 
 ENV PYTHONUNBUFFERED=1
 
