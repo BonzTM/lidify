@@ -12,6 +12,7 @@ import {
     SkipForward,
     ChevronDown,
     Music as MusicIcon,
+    ListMusic,
     Shuffle,
     Repeat,
     Repeat1,
@@ -428,6 +429,15 @@ export function OverlayPlayer() {
 
                     {/* Secondary Controls */}
                     <div className="flex items-center justify-center gap-8">
+                        <Link
+                            href="/queue"
+                            className="text-gray-500 hover:text-white transition-colors"
+                            title="View queue"
+                            aria-label="View queue"
+                        >
+                            <ListMusic className="w-5 h-5" />
+                        </Link>
+
                         <button
                             onClick={toggleShuffle}
                             disabled={!canSkip}
