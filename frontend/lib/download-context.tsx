@@ -50,13 +50,14 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     const [pendingDownloads, setPendingDownloads] = useState<PendingDownload[]>(
         []
     );
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, user } = useAuth();
     const downloadStatus = useDownloadStatus(15000, isAuthenticated);
     const [downloadsEnabled, setDownloadsEnabled] = useState(false);
 
     // Fetch download service availability on mount / when auth changes
+    // Downloads are only shown to admin users
     useEffect(() => {
-        if (!isAuthenticated) {
+        if (!isAuthenticated || user?.role !== "admin") {
             setDownloadsEnabled(false);
             return;
         }
@@ -71,7 +72,7 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
             });
 
         return () => { mounted = false; };
-    }, [isAuthenticated]);
+    }, [isAuthenticated, user?.role]);
 
     // Sync pending downloads with actual download status (render-time adjustment)
     const [prevActiveDownloads, setPrevActiveDownloads] = useState(downloadStatus.activeDownloads);
