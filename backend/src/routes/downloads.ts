@@ -187,9 +187,11 @@ router.post("/", async (req, res) => {
         }
 
         // Single album download - verify artist name before proceeding
+        // NOTE: Do NOT pass `mbid` here — for album downloads, mbid is a release-group
+        // MBID, not an artist MBID. Passing it to getArtist() would cause a 404.
         let verifiedArtistName = artistName;
         if (type === "album" && artistName) {
-            const verification = await verifyArtistName(artistName, mbid);
+            const verification = await verifyArtistName(artistName);
             if (verification.wasCorrected) {
                 logger.debug(
                     `[DOWNLOAD] Artist name verified: "${artistName}" → "${verification.verifiedName}" (source: ${verification.source})`

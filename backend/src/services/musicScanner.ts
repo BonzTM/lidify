@@ -495,8 +495,28 @@ export class MusicScannerService {
         if (!rawArtistName || rawArtistName.trim() === "") {
             const folderPath = path.dirname(relativePath);
             const folderName = path.basename(folderPath);
-            const parsedArtist = parseArtistFromPath(folderName);
+            let parsedArtist = parseArtistFromPath(folderName);
             
+            // If the immediate parent folder didn't yield an artist (e.g. it's an album
+            // folder like "Robbin' The Hood"), try the grandparent folder which may be
+            // the artist folder in an Artist/Album/Track directory structure.
+            if (!parsedArtist) {
+                const grandparentPath = path.dirname(folderPath);
+                const grandparentName = path.basename(grandparentPath);
+                // Only use grandparent if it's a real folder name (not empty, not the root)
+                if (grandparentName && grandparentName !== "." && grandparentName !== "/") {
+                    // The grandparent folder is likely the artist name itself
+                    // (e.g., "Sublime" in Sublime/Robbin' The Hood/track.flac)
+                    const gpParsed = parseArtistFromPath(grandparentName);
+                    if (gpParsed) {
+                        parsedArtist = gpParsed;
+                    } else if (grandparentName.length >= 2 && !/^\d+$/.test(grandparentName)) {
+                        // Use the grandparent folder name directly as the artist
+                        parsedArtist = grandparentName;
+                    }
+                }
+            }
+
             if (parsedArtist) {
                 logger.debug(
                     `[Scanner] No metadata artist found, using folder: "${folderName}" -> "${parsedArtist}"`
