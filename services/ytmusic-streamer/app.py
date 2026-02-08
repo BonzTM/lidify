@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional, Literal
@@ -26,6 +27,63 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from ytmusicapi import YTMusic, OAuthCredentials
+
+# ════════════════════════════════════════════════════════════════════
+# WORKAROUND REGISTRY — ytmusicapi issue #813  (OAuth + WEB_REMIX broken)
+# ════════════════════════════════════════════════════════════════════
+#
+# Since ~Aug 29 2025, Google's InnerTube API rejects ALL requests that
+# combine an OAuth token with the WEB_REMIX client context (HTTP 400
+# "Request contains an invalid argument"). This is tracked upstream at:
+#
+#   https://github.com/sigma67/ytmusicapi/issues/813
+#
+# Our workaround switches the client context to TVHTML5 v7, which
+# Google still accepts with OAuth tokens. However the TVHTML5 client
+# returns a different response format (TV renderers) that ytmusicapi's
+# built-in parsers cannot handle, so we also implement a custom search
+# parser (_tv_search).
+#
+# ── PIECES OF THIS WORKAROUND (search for "WORKAROUND(#813)") ──────
+#
+#   1. _get_ytmusic()  — lines ~117-127
+#      Overrides yt.context clientName/clientVersion to TVHTML5 and
+#      strips the API key from yt.params.
+#
+#   2. _tv_search()    — lines ~224-410
+#      Entire function. Custom parser that calls yt._send_request()
+#      directly and walks compactVideoRenderer / tileRenderer /
+#      musicCardShelfRenderer trees to extract search results.
+#
+#   3. search()        — lines ~590-607
+#      Calls _tv_search() instead of yt.search().
+#
+#   4. search_debug()  — lines ~610-625
+#      Debug endpoint for inspecting raw TV responses. Can be deleted.
+#
+# ── HOW TO REVERT WHEN UPSTREAM IS FIXED ───────────────────────────
+#
+#   1. Update ytmusicapi to the fixed version in requirements.txt.
+#
+#   2. In _get_ytmusic(): delete the 5 lines between the
+#      "WORKAROUND(#813)" comment markers (the context override and
+#      params reassignment). The YTMusic instance will then keep its
+#      default WEB_REMIX context.
+#
+#   3. In search(): replace the call to _tv_search() with the
+#      original yt.search() call and its result-mapping logic.
+#      The original search handler is preserved in git history;
+#      see the commit that introduced this workaround.
+#
+#   4. Delete the _tv_search() function entirely.
+#
+#   5. Delete the /search/debug endpoint (optional, was only for
+#      troubleshooting the TV response format).
+#
+#   6. Verify that yt.search("test", filter="songs") returns results
+#      without HTTP 400.
+#
+# ════════════════════════════════════════════════════════════════════
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -113,8 +171,26 @@ def _get_ytmusic(user_id: str) -> YTMusic:
             else:
                 yt = YTMusic(str(oauth_path))
 
+            # ── WORKAROUND(#813) START ──────────────────────────────
+            # Google broke OAuth + WEB_REMIX since ~Aug 29 2025.
+            # Switching the client context to TVHTML5 v7 makes OAuth
+            # requests succeed. The response format is different (TV
+            # renderers instead of musicShelfRenderer), so we use a
+            # custom search parser (_tv_search) below.
+            #
+            # Original values (set by ytmusicapi's initialize_context()):
+            #   clientName    = "WEB_REMIX"
+            #   clientVersion = "1.yyyymmdd.xx.xx"  (auto-detected)
+            #   yt.params     = "?alt=json&key=<INNERTUBE_API_KEY>"
+            #
+            # REVERT: delete these 3 lines when issue #813 is fixed.
+            yt.context["context"]["client"]["clientName"] = "TVHTML5"
+            yt.context["context"]["client"]["clientVersion"] = "7.20250101.00.00"
+            yt.params = "?alt=json"  # TV client must NOT send the API key
+            # ── WORKAROUND(#813) END ────────────────────────────────
+
             _ytmusic_instances[user_id] = yt
-            log.info(f"Loaded YTMusic for user {user_id}")
+            log.info(f"Loaded YTMusic for user {user_id} (TVHTML5 context)")
             return yt
         except Exception as e:
             log.error(f"Failed to load OAuth for user {user_id}: {e}")
@@ -207,6 +283,181 @@ def _get_stream_url_sync(user_id: str, video_id: str, quality: str = "HIGH") -> 
     except Exception as e:
         log.error(f"yt-dlp extraction failed for {video_id}: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to extract stream: {str(e)}")
+
+
+def _tv_search(yt: YTMusic, query: str, filter: Optional[str] = None, limit: int = 20) -> list[dict]:
+    """
+    WORKAROUND(#813) — Custom search parser for the TVHTML5 client.
+
+    The standard yt.search() cannot parse the TV response format, so we
+    call yt._send_request("search", ...) directly and parse the
+    TV-specific renderers ourselves.
+
+    REVERT: delete this entire function and restore the original
+    search() endpoint that calls yt.search().  See the workaround
+    registry at the top of this file for full instructions.
+
+    Returns a list of dicts with keys: type, videoId, title, artist(s),
+    album, duration, duration_seconds, thumbnails, etc.
+    """
+    body: dict = {"query": query}
+
+    # Apply filter params (song-only search).
+    # For TVHTML5 the filter encoding is the same as WEB_REMIX.
+    if filter == "songs":
+        body["params"] = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
+    elif filter == "videos":
+        body["params"] = "EgWKAQIQAWoMEA4QChADEAQQCRAF"
+    elif filter == "albums":
+        body["params"] = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
+    elif filter == "artists":
+        body["params"] = "EgWKAQIgAWoMEA4QChADEAQQCRAF"
+
+    try:
+        raw = yt._send_request("search", body)
+    except Exception:
+        raise  # let caller handle
+
+    items: list[dict] = []
+
+    def _extract_text(obj) -> str:
+        """Pull text from simpleText, runs, or accessibilityData."""
+        if not obj:
+            return ""
+        if isinstance(obj, str):
+            return obj
+        if "simpleText" in obj:
+            return obj["simpleText"]
+        if "runs" in obj:
+            return "".join(r.get("text", "") for r in obj["runs"])
+        return ""
+
+    def _parse_duration_text(text: str) -> int:
+        """Convert '3:45' or '1:02:30' to seconds."""
+        parts = text.strip().split(":")
+        try:
+            parts_int = [int(p) for p in parts]
+        except ValueError:
+            return 0
+        if len(parts_int) == 3:
+            return parts_int[0] * 3600 + parts_int[1] * 60 + parts_int[2]
+        if len(parts_int) == 2:
+            return parts_int[0] * 60 + parts_int[1]
+        return 0
+
+    def _walk_renderers(node, depth=0):
+        """Recursively walk the TV response tree and extract results."""
+        if depth > 15 or len(items) >= limit:
+            return
+        if isinstance(node, dict):
+            # ── compactVideoRenderer (common in TVHTML5 search) ──
+            if "compactVideoRenderer" in node:
+                r = node["compactVideoRenderer"]
+                vid = r.get("videoId", "")
+                if vid:
+                    title_text = _extract_text(r.get("title"))
+                    # Short byline text usually has "Artist · Album" or just "Artist"
+                    byline = _extract_text(r.get("shortBylineText") or r.get("longBylineText"))
+                    duration_text = _extract_text(r.get("lengthText"))
+                    thumbs = r.get("thumbnail", {}).get("thumbnails", [])
+                    items.append({
+                        "type": "song",
+                        "videoId": vid,
+                        "title": title_text,
+                        "artist": byline.split("\u00b7")[0].strip() if byline else "Unknown",
+                        "artists": [byline.split("\u00b7")[0].strip()] if byline else [],
+                        "album": byline.split("\u00b7")[1].strip() if "\u00b7" in byline else None,
+                        "duration": duration_text,
+                        "duration_seconds": _parse_duration_text(duration_text),
+                        "thumbnails": thumbs,
+                        "isExplicit": False,
+                    })
+                return
+
+            # ── tileRenderer (TVHTML5 v7+) ──
+            if "tileRenderer" in node:
+                r = node["tileRenderer"]
+                nav_ep = r.get("onSelectCommand", {}).get("watchEndpoint", {})
+                vid = nav_ep.get("videoId", "")
+                if not vid:
+                    # Try navigation endpoint
+                    nav_ep2 = r.get("navigationEndpoint", {}).get("watchEndpoint", {})
+                    vid = nav_ep2.get("videoId", "")
+                if vid:
+                    title_text = _extract_text(r.get("header", {}).get("tileHeaderRenderer", {}).get("title"))
+                    # metadata lines contain artist / album / duration
+                    metadata = r.get("metadata", {}).get("tileMetadataRenderer", {})
+                    lines = metadata.get("lines", []) if metadata else []
+                    artist_name = ""
+                    duration_text = ""
+                    for line in lines:
+                        line_renderer = line.get("lineRenderer", {})
+                        for item_entry in line_renderer.get("items", []):
+                            lt = _extract_text(item_entry.get("lineItemRenderer", {}).get("text"))
+                            if lt:
+                                # Duration looks like 3:45
+                                if re.match(r"^\d+:\d{2}", lt):
+                                    duration_text = lt
+                                elif not artist_name:
+                                    artist_name = lt
+                    thumbs = (
+                        r.get("contentImage", {})
+                        .get("musicThumbnailRenderer", {})
+                        .get("thumbnail", {})
+                        .get("thumbnails", [])
+                    )
+                    items.append({
+                        "type": "song",
+                        "videoId": vid,
+                        "title": title_text or "",
+                        "artist": artist_name or "Unknown",
+                        "artists": [artist_name] if artist_name else [],
+                        "album": None,
+                        "duration": duration_text,
+                        "duration_seconds": _parse_duration_text(duration_text),
+                        "thumbnails": thumbs,
+                        "isExplicit": False,
+                    })
+                return
+
+            # ── musicCardShelfRenderer (top result) ──
+            if "musicCardShelfRenderer" in node:
+                r = node["musicCardShelfRenderer"]
+                nav_ep = (r.get("title", {}).get("runs", [{}])[0].get("navigationEndpoint", {})
+                          .get("watchEndpoint", {}))
+                vid = nav_ep.get("videoId", "")
+                if vid:
+                    title_text = _extract_text(r.get("title"))
+                    subtitle = _extract_text(r.get("subtitle"))
+                    items.append({
+                        "type": "song",
+                        "videoId": vid,
+                        "title": title_text,
+                        "artist": subtitle.split("\u00b7")[0].strip() if subtitle else "Unknown",
+                        "artists": [subtitle.split("\u00b7")[0].strip()] if subtitle else [],
+                        "album": None,
+                        "duration": "",
+                        "duration_seconds": 0,
+                        "thumbnails": r.get("thumbnail", {}).get("musicThumbnailRenderer", {}).get("thumbnail", {}).get("thumbnails", []),
+                        "isExplicit": False,
+                    })
+                # Also walk children for more results
+                for child in r.get("contents", []):
+                    _walk_renderers(child, depth + 1)
+                return
+
+            # ── Fallback: walk all dict values ──
+            for v in node.values():
+                _walk_renderers(v, depth + 1)
+
+        elif isinstance(node, list):
+            for item_node in node:
+                _walk_renderers(item_node, depth + 1)
+
+    _walk_renderers(raw)
+
+    log.debug(f"TV search '{query}' filter={filter!r}: found {len(items)} result(s)")
+    return items[:limit]
 
 
 def _clean_stream_cache():
@@ -405,70 +656,46 @@ async def auth_device_code_poll(req: DeviceCodePollRequest, user_id: str = Query
 
 @app.post("/search")
 async def search(req: SearchRequest, user_id: str = Query(...)):
-    """Search YouTube Music for songs, albums, or artists."""
+    """Search YouTube Music for songs, albums, or artists.
+
+    WORKAROUND(#813): calls _tv_search() instead of yt.search() because
+    the TVHTML5 client context returns TV-format responses that
+    ytmusicapi's built-in parser cannot handle.
+
+    REVERT: replace the _tv_search() call with the original yt.search()
+    call and its result-mapping loop.  The original code is in git
+    history — see the commit that introduced this workaround.
+    """
     yt = _get_ytmusic(user_id)
 
     try:
         log.debug(f"Search: query={req.query!r}, filter={req.filter!r}, limit={req.limit}")
-        results = yt.search(req.query, filter=req.filter, limit=req.limit)
-
-        items = []
-        for r in results:
-            result_type = r.get("resultType") or r.get("category", "").lower()
-
-            if result_type == "song":
-                artists = r.get("artists", [])
-                album = r.get("album", {}) or {}
-                items.append({
-                    "type": "song",
-                    "videoId": r.get("videoId"),
-                    "title": r.get("title"),
-                    "artist": artists[0].get("name") if artists else "Unknown",
-                    "artists": [a.get("name") for a in artists],
-                    "album": album.get("name") if album else None,
-                    "albumId": album.get("id") if album else None,
-                    "duration": r.get("duration"),
-                    "duration_seconds": r.get("duration_seconds"),
-                    "thumbnails": r.get("thumbnails", []),
-                    "isExplicit": r.get("isExplicit", False),
-                })
-            elif result_type == "album":
-                artists = r.get("artists", [])
-                items.append({
-                    "type": "album",
-                    "browseId": r.get("browseId"),
-                    "title": r.get("title"),
-                    "artist": artists[0].get("name") if artists else "Unknown",
-                    "artists": [a.get("name") for a in artists],
-                    "year": r.get("year"),
-                    "thumbnails": r.get("thumbnails", []),
-                    "isExplicit": r.get("isExplicit", False),
-                    "type_detail": r.get("type", "Album"),
-                })
-            elif result_type == "artist":
-                items.append({
-                    "type": "artist",
-                    "browseId": r.get("browseId"),
-                    "name": r.get("artist") or r.get("name"),
-                    "thumbnails": r.get("thumbnails", []),
-                    "subscribers": r.get("subscribers"),
-                })
-            elif result_type == "video":
-                artists = r.get("artists", [])
-                items.append({
-                    "type": "video",
-                    "videoId": r.get("videoId"),
-                    "title": r.get("title"),
-                    "artist": artists[0].get("name") if artists else "Unknown",
-                    "artists": [a.get("name") for a in artists],
-                    "duration": r.get("duration"),
-                    "duration_seconds": r.get("duration_seconds"),
-                    "thumbnails": r.get("thumbnails", []),
-                })
-
+        items = _tv_search(yt, req.query, filter=req.filter, limit=req.limit)
         return {"results": items, "total": len(items)}
     except Exception as e:
         log.error(f"Search failed for user {user_id} query={req.query!r} filter={req.filter!r}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/debug")
+async def search_debug(req: SearchRequest, user_id: str = Query(...)):
+    """WORKAROUND(#813) — Return the raw TV-format response for debugging.
+
+    This endpoint lets us inspect the actual TVHTML5 response structure
+    so we can tune the _tv_search parser.  NOT called by the backend —
+    only for manual troubleshooting (e.g. curl from inside the container).
+
+    REVERT: delete this entire endpoint when #813 is fixed.
+    """
+    yt = _get_ytmusic(user_id)
+    body: dict = {"query": req.query}
+    if req.filter == "songs":
+        body["params"] = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
+    try:
+        raw = yt._send_request("search", body)
+        return {"raw": raw}
+    except Exception as e:
+        log.error(f"Debug search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
