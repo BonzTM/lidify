@@ -61,6 +61,9 @@ export interface Track {
     displayTitle?: string | null;
     displayTrackNo?: number | null;
     hasUserOverrides?: boolean;
+    // YouTube Music streaming fields
+    streamSource?: "local" | "youtube";
+    youtubeVideoId?: string;
     // Audio features for vibe mode visualization
     audioFeatures?: {
         bpm?: number | null;

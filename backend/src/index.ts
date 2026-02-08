@@ -39,6 +39,7 @@ import analysisRoutes from "./routes/analysis";
 import releasesRoutes from "./routes/releases";
 import vibeRoutes from "./routes/vibe";
 import systemRoutes from "./routes/system";
+import ytMusicRoutes from "./routes/youtubeMusic";
 import { dataCacheService } from "./services/dataCache";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAuth, requireAdmin } from "./middleware/auth";
@@ -163,6 +164,7 @@ app.use("/api/analysis", apiLimiter, analysisRoutes);
 app.use("/api/releases", apiLimiter, releasesRoutes);
 app.use("/api/vibe", apiLimiter, vibeRoutes);
 app.use("/api/system", apiLimiter, systemRoutes);
+app.use("/api/ytmusic", apiLimiter, ytMusicRoutes);
 
 // Health check (keep at root for simple container health checks)
 app.get("/health", (req, res) => {
@@ -406,6 +408,9 @@ app.listen(config.port, "0.0.0.0", async () => {
         logger.error("Download queue reconciliation failed:", err);
         // Non-fatal - queue will start fresh
     }
+
+    // YouTube Music OAuth credentials are restored lazily per-user on first request
+    // (see ensureUserOAuth in routes/youtubeMusic.ts), so no startup restore needed.
 
     // Auto-backfill artist counts if needed (for library filtering performance)
     // This runs in the background and doesn't block startup

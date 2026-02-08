@@ -43,6 +43,9 @@ export interface Track {
     displayTitle?: string | null;
     displayTrackNo?: number | null;
     hasUserOverrides?: boolean;
+    // YouTube Music streaming fields
+    streamSource?: "local" | "youtube";
+    youtubeVideoId?: string;
 }
 
 export interface SimilarAlbum {

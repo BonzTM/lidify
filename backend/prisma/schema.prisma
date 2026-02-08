@@ -46,12 +46,15 @@ model User {
 }
 
 model UserSettings {
-  userId          String  @id
-  playbackQuality String  @default("original")
-  wifiOnly        Boolean @default(false)
-  offlineEnabled  Boolean @default(false)
-  maxCacheSizeMb  Int     @default(10240)
-  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String  @id
+  playbackQuality   String  @default("original")
+  wifiOnly          Boolean @default(false)
+  offlineEnabled    Boolean @default(false)
+  maxCacheSizeMb    Int     @default(10240)
+  // YouTube Music — per-user OAuth credentials and quality preference
+  ytMusicOAuthJson  String? // Encrypted OAuth token JSON from ytmusicapi
+  ytMusicQuality    String  @default("HIGH")
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model PlaybackState {
@@ -113,6 +116,8 @@ model SystemSettings {
   clapWorkers                 Int      @default(2)
   lastfmApiKey                String?
   soulseekConcurrentDownloads Int      @default(4)
+  // YouTube Music streaming — admin toggle only (per-user credentials are on UserSettings)
+  ytMusicEnabled              Boolean  @default(false)
 }
 
 model Artist {

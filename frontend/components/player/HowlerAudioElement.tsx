@@ -466,7 +466,12 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         let startTime = 0;
 
         if (playbackType === "track" && currentTrack) {
-            streamUrl = api.getStreamUrl(currentTrack.id);
+            // YouTube Music streams use the proxy endpoint
+            if (currentTrack.streamSource === "youtube" && currentTrack.youtubeVideoId) {
+                streamUrl = api.getYtMusicStreamUrl(currentTrack.youtubeVideoId);
+            } else {
+                streamUrl = api.getStreamUrl(currentTrack.id);
+            }
         } else if (playbackType === "audiobook" && currentAudiobook) {
             streamUrl = api.getAudiobookStreamUrl(currentAudiobook.id);
             startTime = currentAudiobook.progress?.currentTime || 0;
@@ -496,13 +501,18 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
             setDuration(fallbackDuration);
 
             let format = "mp3";
-            const filePath = currentTrack?.filePath || "";
-            if (filePath) {
-                const ext = filePath.split(".").pop()?.toLowerCase();
-                if (ext === "flac") format = "flac";
-                else if (ext === "m4a" || ext === "aac") format = "mp4";
-                else if (ext === "ogg" || ext === "opus") format = "webm";
-                else if (ext === "wav") format = "wav";
+            if (currentTrack?.streamSource === "youtube") {
+                // YouTube Music streams are AAC in MP4 container
+                format = "mp4";
+            } else {
+                const filePath = currentTrack?.filePath || "";
+                if (filePath) {
+                    const ext = filePath.split(".").pop()?.toLowerCase();
+                    if (ext === "flac") format = "flac";
+                    else if (ext === "m4a" || ext === "aac") format = "mp4";
+                    else if (ext === "ogg" || ext === "opus") format = "webm";
+                    else if (ext === "wav") format = "wav";
+                }
             }
 
             howlerEngine.load(streamUrl, false, format);

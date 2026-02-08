@@ -45,6 +45,8 @@ services:
             PODCAST_DEBUG: ${PODCAST_DEBUG:-0}
             # TIDAL sidecar URL
             TIDAL_SIDECAR_URL: http://127.0.0.1:8585 # This is the default value.  Only change if needed
+            # YouTube Music streamer sidecar URL
+            YTMUSIC_STREAMER_URL: http://127.0.0.1:8586 # Defaults to 127.0.0.1:8586
         volumes:
             - ${MUSIC_PATH:-./music}:/music
             - backend_cache:/app/cache
@@ -341,11 +343,35 @@ services:
                 reservations:
                     memory: 1G
 
+    # YouTube Music Streamer - Streams audio from YouTube Music subscription
+    ytmusic-streamer:
+        build:
+            context: ./services/ytmusic-streamer
+        container_name: lidify_ytmusic_streamer
+        environment:
+            DATA_PATH: /data
+            DEBUG: ${YTMUSIC_DEBUG:-}
+        volumes:
+            - ytmusic_data:/data
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8586/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 10s
+        deploy:
+            resources:
+                limits:
+                    memory: 512M
+                    cpus: "1"
+
 volumes:
     # Lidify core
     postgres_data:
     backend_cache:
     backend_logs:
+    ytmusic_data:
     # External services
     lidarr_config:
     prowlarr_config:

@@ -8,6 +8,7 @@ const defaultSettings: UserSettings = {
     wifiOnly: false,
     offlineEnabled: false,
     maxCacheSizeMb: 5120,
+    ytMusicQuality: "HIGH",
 };
 
 export function useSettingsData() {

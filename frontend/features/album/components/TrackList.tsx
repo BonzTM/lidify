@@ -6,6 +6,7 @@ import type { Track, Album, AlbumSource } from "../types";
 import type { ColorPalette } from "@/hooks/useImageColor";
 import { formatTime } from "@/utils/formatTime";
 import { formatNumber } from "@/utils/formatNumber";
+import { YouTubeBadge } from "@/components/ui/YouTubeBadge";
 
 interface TrackListProps {
     tracks: Track[];
@@ -51,7 +52,8 @@ const TrackRow = memo(
         onAddToPlaylist,
         onPreview,
     }: TrackRowProps) {
-        const isPreviewOnly = !isOwned;
+        const isYouTubeTrack = track.streamSource === "youtube";
+        const isPreviewOnly = !isOwned && !isYouTubeTrack;
 
         const handleAddToQueue = useCallback(
             (e: React.MouseEvent) => {
@@ -82,10 +84,11 @@ const TrackRow = memo(
 
         const handleRowClick = useCallback(
             (e: React.MouseEvent) => {
-                // For unowned tracks, play preview instead of local file
+                // For unowned tracks without YouTube Music, play preview
                 if (isPreviewOnly) {
                     onPreview(track, e);
                 } else {
+                    // Owned tracks and YouTube Music tracks play normally
                     onPlayTrack(track, index);
                 }
             },
@@ -147,6 +150,7 @@ const TrackRow = memo(
                         <span className="truncate">
                             {track.displayTitle ?? track.title}
                         </span>
+                        {isYouTubeTrack && <YouTubeBadge />}
                         {isPreviewOnly && (
                             <span className="shrink-0 text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 font-medium">
                                 PREVIEW
@@ -161,7 +165,7 @@ const TrackRow = memo(
                         )}
                 </div>
 
-                {isOwned &&
+                {(isOwned || isYouTubeTrack) &&
                     track.playCount !== undefined &&
                     track.playCount > 0 && (
                         <div className="hidden lg:flex items-center gap-1.5 text-xs text-gray-400 bg-[#1a1a1a] px-2 py-1 rounded-full">
@@ -170,7 +174,7 @@ const TrackRow = memo(
                         </div>
                     )}
 
-                {isOwned && (
+                {(isOwned || isYouTubeTrack) && (
                     <>
                         <button
                             onClick={handleAddToQueue}
@@ -221,7 +225,8 @@ const TrackRow = memo(
             prevProps.isPlaying === nextProps.isPlaying &&
             prevProps.isPreviewPlaying === nextProps.isPreviewPlaying &&
             prevProps.index === nextProps.index &&
-            prevProps.isOwned === nextProps.isOwned
+            prevProps.isOwned === nextProps.isOwned &&
+            prevProps.track.streamSource === nextProps.track.streamSource
         );
     }
 );

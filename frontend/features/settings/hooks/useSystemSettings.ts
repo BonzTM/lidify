@@ -38,6 +38,8 @@ const defaultSystemSettings: SystemSettings = {
     // Download preferences
     downloadSource: "soulseek",
     primaryFailureFallback: "none",
+    // YouTube Music streaming (admin toggle only)
+    ytMusicEnabled: false,
 };
 
 export function useSystemSettings() {

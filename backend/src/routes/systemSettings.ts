@@ -84,6 +84,9 @@ const systemSettingsSchema = z.object({
     tidalCountryCode: z.string().nullable().optional(),
     tidalQuality: z.enum(["LOW", "HIGH", "LOSSLESS", "HI_RES_LOSSLESS"]).optional(),
     tidalFileTemplate: z.string().nullable().optional(),
+
+    // YouTube Music streaming (admin toggle only; OAuth & quality are per-user)
+    ytMusicEnabled: z.boolean().optional(),
 });
 
 // GET /system-settings

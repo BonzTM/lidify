@@ -1972,6 +1972,69 @@ class ApiClient {
     ): Promise<{ success: boolean; newJobId?: string }> {
         return this.post(`/notifications/downloads/${id}/retry`);
     }
+
+    // ── YouTube Music ──────────────────────────────────────────────
+
+    async getYtMusicStatus(): Promise<{
+        enabled: boolean;
+        available: boolean;
+        authenticated: boolean;
+    }> {
+        return this.request(`/ytmusic/status`);
+    }
+
+    async saveYtMusicOAuthToken(oauthJson: string): Promise<{ success: boolean }> {
+        return this.post(`/ytmusic/auth/save-token`, { oauthJson });
+    }
+
+    async clearYtMusicAuth(): Promise<{ success: boolean }> {
+        return this.post(`/ytmusic/auth/clear`);
+    }
+
+    async searchYtMusic(
+        query: string,
+        filter?: "songs" | "albums" | "artists" | "videos"
+    ): Promise<{ results: any[]; filter: string | null }> {
+        return this.post(`/ytmusic/search`, { query, filter });
+    }
+
+    async getYtMusicAlbum(browseId: string): Promise<any> {
+        return this.request(`/ytmusic/album/${browseId}`);
+    }
+
+    async getYtMusicArtist(channelId: string): Promise<any> {
+        return this.request(`/ytmusic/artist/${channelId}`);
+    }
+
+    async getYtMusicSong(videoId: string): Promise<any> {
+        return this.request(`/ytmusic/song/${videoId}`);
+    }
+
+    async matchYtMusicTrack(
+        artist: string,
+        title: string,
+        albumTitle?: string
+    ): Promise<{
+        match: { videoId: string; title: string; duration: number } | null;
+    }> {
+        return this.post(`/ytmusic/match`, { artist, title, albumTitle });
+    }
+
+    /**
+     * Build a stream URL for YouTube Music playback.
+     * Like getStreamUrl(), this returns a synchronous URL string
+     * that the audio engine can load directly.
+     */
+    getYtMusicStreamUrl(videoId: string, quality?: string): string {
+        let url = `${this.getBaseUrl()}/api/ytmusic/stream/${videoId}`;
+        const params = new URLSearchParams();
+        if (quality) params.set("quality", quality);
+        const token = this.getCurrentToken();
+        if (token) params.set("token", encodeURIComponent(token));
+        const qs = params.toString();
+        if (qs) url += `?${qs}`;
+        return url;
+    }
 }
 
 // Create a singleton instance without passing baseUrl - it will be determined dynamically
