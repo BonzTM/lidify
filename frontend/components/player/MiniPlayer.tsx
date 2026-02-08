@@ -573,6 +573,13 @@ export function MiniPlayer() {
 
                         {/* Track Info */}
                         <div className="flex-1 min-w-0">
+                            <Link
+                                href="/queue"
+                                className="text-[10px] font-medium uppercase tracking-wider text-brand hover:text-brand-hover transition-colors leading-none mb-0.5 inline-block"
+                                title="View queue"
+                            >
+                                Now Playing
+                            </Link>
                             {mediaLink ? (
                                 <Link
                                     href={mediaLink}
