@@ -11,6 +11,7 @@ import {
     Power,
     Menu,
     Bell,
+    ChevronLeft,
 } from "lucide-react";
 import { ActivityPanelToggle } from "./ActivityPanel";
 import { cn } from "@/utils/cn";
@@ -196,6 +197,18 @@ export function TopBar() {
                         <Menu className="w-5 h-5" />
                     </button>
 
+                    {/* Back */}
+                    {pathname !== "/" && (
+                        <button
+                            onClick={() => router.back()}
+                            className="w-10 h-10 rounded-full flex items-center justify-center transition-all flex-shrink-0 mr-1 bg-[#0a0a0a] text-gray-400 hover:bg-[#1a1a1a] hover:text-white"
+                            aria-label="Go back"
+                            title="Go back"
+                        >
+                            <ChevronLeft className="w-5 h-5" />
+                        </button>
+                    )}
+
                     {/* Home */}
                     <Link
                         href="/"
@@ -269,8 +282,20 @@ export function TopBar() {
                         </span>
                     </div>
 
-                    {/* Center - Home & Search */}
+                    {/* Center - Back, Home & Search */}
                     <div className="flex-1 flex items-center justify-center gap-3 max-w-3xl mx-auto">
+                        {/* Back */}
+                        {pathname !== "/" && (
+                            <button
+                                onClick={() => router.back()}
+                                className="w-12 h-12 rounded-full flex items-center justify-center transition-all flex-shrink-0 bg-[#0a0a0a] text-gray-400 hover:bg-[#1a1a1a] hover:text-white hover:scale-105"
+                                aria-label="Go back"
+                                title="Go back"
+                            >
+                                <ChevronLeft className="w-6 h-6" />
+                            </button>
+                        )}
+
                         <Link
                             href="/"
                             className={cn(
