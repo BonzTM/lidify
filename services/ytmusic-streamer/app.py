@@ -25,7 +25,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from ytmusicapi import YTMusic
+from ytmusicapi import YTMusic, OAuthCredentials
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -59,6 +59,19 @@ class OAuthTokenPayload(BaseModel):
     oauth_json: str  # Full JSON string from ytmusicapi OAuth
 
 
+class DeviceCodeRequest(BaseModel):
+    """Request to initiate device code flow."""
+    client_id: str
+    client_secret: str
+
+
+class DeviceCodePollRequest(BaseModel):
+    """Request to poll for device code completion."""
+    client_id: str
+    client_secret: str
+    device_code: str
+
+
 class SearchRequest(BaseModel):
     query: str
     filter: Optional[Literal["songs", "albums", "artists", "videos"]] = None
@@ -82,7 +95,24 @@ def _get_ytmusic(user_id: str) -> YTMusic:
     oauth_path = _oauth_file(user_id)
     if oauth_path.exists():
         try:
-            yt = YTMusic(str(oauth_path))
+            # Read the oauth JSON to check if it has custom client credentials
+            oauth_data = json.loads(oauth_path.read_text())
+
+            # Build OAuthCredentials if client_id/client_secret are stored alongside
+            oauth_creds = None
+            creds_path = DATA_PATH / f"client_creds_{user_id}.json"
+            if creds_path.exists():
+                creds_data = json.loads(creds_path.read_text())
+                oauth_creds = OAuthCredentials(
+                    client_id=creds_data["client_id"],
+                    client_secret=creds_data["client_secret"],
+                )
+
+            if oauth_creds:
+                yt = YTMusic(str(oauth_path), oauth_credentials=oauth_creds)
+            else:
+                yt = YTMusic(str(oauth_path))
+
             _ytmusic_instances[user_id] = yt
             log.info(f"Loaded YTMusic for user {user_id}")
             return yt
@@ -227,6 +257,7 @@ async def auth_restore(req: Request, user_id: str = Query(...)):
     Restore OAuth credentials for a user from the backend database.
     The backend sends the decrypted OAuth JSON which is written as
     the user's credential file so that ytmusicapi can use it.
+    Optionally accepts client_id/client_secret for OAuthCredentials.
     """
     body = await req.json()
     oauth_json = body.get("oauth_json")
@@ -240,6 +271,17 @@ async def auth_restore(req: Request, user_id: str = Query(...)):
 
     DATA_PATH.mkdir(parents=True, exist_ok=True)
     _oauth_file(user_id).write_text(oauth_json)
+
+    # Save client credentials if provided
+    client_id = body.get("client_id")
+    client_secret = body.get("client_secret")
+    if client_id and client_secret:
+        creds_path = DATA_PATH / f"client_creds_{user_id}.json"
+        creds_path.write_text(json.dumps({
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }))
+
     _invalidate_ytmusic(user_id)
     log.info(f"OAuth credentials restored for user {user_id}")
     return {"status": "ok", "message": "OAuth credentials restored"}
@@ -252,8 +294,95 @@ async def auth_clear(user_id: str = Query(...)):
     oauth_path = _oauth_file(user_id)
     if oauth_path.exists():
         oauth_path.unlink()
+    creds_path = DATA_PATH / f"client_creds_{user_id}.json"
+    if creds_path.exists():
+        creds_path.unlink()
     log.info(f"OAuth credentials cleared for user {user_id}")
     return {"status": "ok", "message": "OAuth credentials removed"}
+
+
+# ── OAuth Device Code Flow ──────────────────────────────────────────
+
+@app.post("/auth/device-code")
+async def auth_device_code(req: DeviceCodeRequest):
+    """
+    Initiate the Google OAuth device code flow.
+    Returns a user_code and verification_url for the user to visit.
+    """
+    try:
+        oauth_creds = OAuthCredentials(
+            client_id=req.client_id,
+            client_secret=req.client_secret,
+        )
+        code = oauth_creds.get_code()
+        log.info(f"Device code flow initiated, user_code: {code.get('user_code')}")
+        return {
+            "device_code": code["device_code"],
+            "user_code": code["user_code"],
+            "verification_url": code["verification_url"],
+            "expires_in": code.get("expires_in", 1800),
+            "interval": code.get("interval", 5),
+        }
+    except Exception as e:
+        log.error(f"Device code initiation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate device code flow: {str(e)}",
+        )
+
+
+@app.post("/auth/device-code/poll")
+async def auth_device_code_poll(req: DeviceCodePollRequest, user_id: str = Query(...)):
+    """
+    Poll for device code authorization completion.
+    Returns the OAuth token JSON when the user completes authorization,
+    or a pending status if still waiting.
+    """
+    try:
+        oauth_creds = OAuthCredentials(
+            client_id=req.client_id,
+            client_secret=req.client_secret,
+        )
+        token = oauth_creds.token_from_code(req.device_code)
+
+        # Check if we got an error (authorization_pending, slow_down, etc.)
+        if "error" in token:
+            error = token["error"]
+            if error in ("authorization_pending", "slow_down"):
+                return {"status": "pending", "error": error}
+            else:
+                log.error(f"Device code poll error: {error}")
+                return {"status": "error", "error": error}
+
+        # Success — we have a token. Save it for this user.
+        DATA_PATH.mkdir(parents=True, exist_ok=True)
+        token_json = json.dumps(dict(token), indent=True)
+        _oauth_file(user_id).write_text(token_json)
+
+        # Save client credentials alongside so _get_ytmusic can use them
+        creds_path = DATA_PATH / f"client_creds_{user_id}.json"
+        creds_path.write_text(json.dumps({
+            "client_id": req.client_id,
+            "client_secret": req.client_secret,
+        }))
+
+        _invalidate_ytmusic(user_id)
+        log.info(f"Device code flow completed for user {user_id}")
+
+        return {
+            "status": "success",
+            "oauth_json": token_json,
+        }
+    except Exception as e:
+        error_str = str(e)
+        # ytmusicapi raises exceptions for pending states too
+        if "authorization_pending" in error_str.lower():
+            return {"status": "pending", "error": "authorization_pending"}
+        log.error(f"Device code poll failed for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to poll device code: {error_str}",
+        )
 
 
 # ── Search ──────────────────────────────────────────────────────────

@@ -25,6 +25,20 @@ export interface YtMusicAuthStatus {
     reason?: string;
 }
 
+export interface YtMusicDeviceCode {
+    device_code: string;
+    user_code: string;
+    verification_url: string;
+    expires_in: number;
+    interval: number;
+}
+
+export interface YtMusicDeviceCodePollResult {
+    status: "pending" | "success" | "error";
+    error?: string;
+    oauth_json?: string;
+}
+
 export interface YtMusicSearchResult {
     results: any[];
     total: number;
@@ -125,6 +139,65 @@ class YouTubeMusicService {
      */
     async clearAuth(userId: string): Promise<void> {
         await this.client.post("/auth/clear", null, {
+            params: { user_id: userId },
+        });
+    }
+
+    // ── Device Code OAuth Flow ─────────────────────────────────────
+
+    /**
+     * Initiate the Google OAuth device code flow.
+     * Returns a user_code and verification_url for the user to visit.
+     */
+    async initiateDeviceAuth(
+        clientId: string,
+        clientSecret: string
+    ): Promise<YtMusicDeviceCode> {
+        const res = await this.client.post("/auth/device-code", {
+            client_id: clientId,
+            client_secret: clientSecret,
+        });
+        return res.data;
+    }
+
+    /**
+     * Poll for device code authorization completion.
+     * Returns the token when ready, or a pending status.
+     */
+    async pollDeviceAuth(
+        userId: string,
+        clientId: string,
+        clientSecret: string,
+        deviceCode: string
+    ): Promise<YtMusicDeviceCodePollResult> {
+        const res = await this.client.post(
+            "/auth/device-code/poll",
+            {
+                client_id: clientId,
+                client_secret: clientSecret,
+                device_code: deviceCode,
+            },
+            { params: { user_id: userId } }
+        );
+        return res.data;
+    }
+
+    /**
+     * Restore OAuth credentials to the sidecar, including client credentials
+     * for OAuthCredentials support.
+     */
+    async restoreOAuthWithCredentials(
+        userId: string,
+        oauthJson: string,
+        clientId?: string,
+        clientSecret?: string
+    ): Promise<void> {
+        const body: Record<string, string> = { oauth_json: oauthJson };
+        if (clientId && clientSecret) {
+            body.client_id = clientId;
+            body.client_secret = clientSecret;
+        }
+        await this.client.post("/auth/restore", body, {
             params: { user_id: userId },
         });
     }

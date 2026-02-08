@@ -64,7 +64,14 @@ async function ensureUserOAuth(userId: string): Promise<boolean> {
         const oauthJson = decrypt(userSettings.ytMusicOAuthJson);
         if (!oauthJson) return false;
 
-        await ytMusicService.restoreOAuth(userId, oauthJson);
+        // Also pass client credentials so the sidecar can build OAuthCredentials
+        const systemSettings = await getSystemSettings();
+        await ytMusicService.restoreOAuthWithCredentials(
+            userId,
+            oauthJson,
+            systemSettings?.ytMusicClientId || undefined,
+            systemSettings?.ytMusicClientSecret || undefined
+        );
         logger.info(`[YTMusic] Restored OAuth credentials for user ${userId}`);
         return true;
     } catch (err) {
@@ -89,6 +96,7 @@ router.get(
                     enabled: settings.ytMusicEnabled,
                     available: false,
                     authenticated: false,
+                    credentialsConfigured: !!(settings?.ytMusicClientId && settings?.ytMusicClientSecret),
                 });
             }
 
@@ -99,6 +107,7 @@ router.get(
             return res.json({
                 enabled: settings.ytMusicEnabled,
                 available: true,
+                credentialsConfigured: !!(settings?.ytMusicClientId && settings?.ytMusicClientSecret),
                 ...authStatus,
             });
         } catch (err) {
@@ -108,7 +117,91 @@ router.get(
     }
 );
 
-// ── OAuth Flow (per-user) ──────────────────────────────────────────
+// ── OAuth Device Code Flow (per-user) ──────────────────────────────
+
+router.post(
+    "/auth/device-code",
+    requireAuth,
+    requireYtMusicEnabled,
+    async (req: Request, res: Response) => {
+        try {
+            const settings = await getSystemSettings();
+            if (!settings?.ytMusicClientId || !settings?.ytMusicClientSecret) {
+                return res.status(400).json({
+                    error: "YouTube Music Client ID and Secret must be configured by an admin first",
+                });
+            }
+
+            const result = await ytMusicService.initiateDeviceAuth(
+                settings.ytMusicClientId,
+                settings.ytMusicClientSecret
+            );
+
+            res.json(result);
+        } catch (err: any) {
+            logger.error("[YTMusic Route] Device code initiation failed:", err);
+            res.status(500).json({
+                error: err.response?.data?.detail || "Failed to initiate device code flow",
+            });
+        }
+    }
+);
+
+router.post(
+    "/auth/device-code/poll",
+    requireAuth,
+    requireYtMusicEnabled,
+    async (req: Request, res: Response) => {
+        try {
+            const userId = req.user!.id;
+            const { deviceCode } = req.body;
+
+            if (!deviceCode) {
+                return res.status(400).json({ error: "deviceCode is required" });
+            }
+
+            const settings = await getSystemSettings();
+            if (!settings?.ytMusicClientId || !settings?.ytMusicClientSecret) {
+                return res.status(400).json({
+                    error: "YouTube Music Client ID and Secret not configured",
+                });
+            }
+
+            const result = await ytMusicService.pollDeviceAuth(
+                userId,
+                settings.ytMusicClientId,
+                settings.ytMusicClientSecret,
+                deviceCode
+            );
+
+            // If we got a successful token, save it encrypted in the DB
+            if (result.status === "success" && result.oauth_json) {
+                await prisma.userSettings.upsert({
+                    where: { userId },
+                    create: {
+                        userId,
+                        ytMusicOAuthJson: encrypt(result.oauth_json),
+                    },
+                    update: {
+                        ytMusicOAuthJson: encrypt(result.oauth_json),
+                    },
+                });
+                logger.info(`[YTMusic] Device code auth completed for user ${userId}`);
+            }
+
+            // Don't send raw oauth_json to the frontend
+            res.json({
+                status: result.status,
+                error: result.error,
+            });
+        } catch (err: any) {
+            logger.error("[YTMusic Route] Device code poll failed:", err);
+            res.status(500).json({
+                error: err.response?.data?.detail || "Failed to poll device code",
+            });
+        }
+    }
+);
 
 router.post(
     "/auth/save-token",
@@ -143,7 +236,13 @@ router.post(
             });
 
             // Restore to sidecar so it's immediately usable
-            await ytMusicService.restoreOAuth(userId, oauthJson);
+            const settings = await getSystemSettings();
+            await ytMusicService.restoreOAuthWithCredentials(
+                userId,
+                oauthJson,
+                settings?.ytMusicClientId || undefined,
+                settings?.ytMusicClientSecret || undefined
+            );
 
             logger.info(`[YTMusic] OAuth credentials saved for user ${userId}`);
             res.json({ success: true });

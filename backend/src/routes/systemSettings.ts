@@ -85,8 +85,10 @@ const systemSettingsSchema = z.object({
     tidalQuality: z.enum(["LOW", "HIGH", "LOSSLESS", "HI_RES_LOSSLESS"]).optional(),
     tidalFileTemplate: z.string().nullable().optional(),
 
-    // YouTube Music streaming (admin toggle only; OAuth & quality are per-user)
+    // YouTube Music streaming
     ytMusicEnabled: z.boolean().optional(),
+    ytMusicClientId: z.string().nullable().optional(),
+    ytMusicClientSecret: z.string().nullable().optional(),
 });
 
 // GET /system-settings
@@ -133,6 +135,7 @@ router.get("/", async (req, res) => {
             spotifyClientSecret: safeDecrypt(settings.spotifyClientSecret),
             tidalAccessToken: safeDecrypt(settings.tidalAccessToken),
             tidalRefreshToken: safeDecrypt(settings.tidalRefreshToken),
+            ytMusicClientSecret: safeDecrypt(settings.ytMusicClientSecret),
         };
 
         res.json(decryptedSettings);
@@ -182,6 +185,10 @@ router.post("/", async (req, res) => {
             encryptedData.tidalAccessToken = encrypt(data.tidalAccessToken);
         if (data.tidalRefreshToken)
             encryptedData.tidalRefreshToken = encrypt(data.tidalRefreshToken);
+        if (data.ytMusicClientSecret)
+            encryptedData.ytMusicClientSecret = encrypt(
+                data.ytMusicClientSecret
+            );
 
         const settings = await prisma.systemSettings.upsert({
             where: { id: "default" },
