@@ -534,6 +534,7 @@ class ApiClient {
         limit?: number;
         offset?: number;
         filter?: "owned" | "discovery" | "all";
+        sortBy?: string;
     }) {
         return this.request<{
             albums: ApiData[];
@@ -551,6 +552,7 @@ class ApiClient {
         albumId?: string;
         limit?: number;
         offset?: number;
+        sortBy?: string;
     }) {
         return this.request<{
             tracks: ApiData[];
