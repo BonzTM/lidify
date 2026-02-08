@@ -88,6 +88,14 @@ model SystemSettings {
   soulseekPassword            String?
   spotifyClientId             String?
   spotifyClientSecret         String?
+  // TIDAL integration (via tiddl Python sidecar)
+  tidalEnabled                Boolean  @default(false)
+  tidalAccessToken            String?
+  tidalRefreshToken           String?
+  tidalUserId                 String?
+  tidalCountryCode            String?  @default("US")
+  tidalQuality                String?  @default("HIGH")
+  tidalFileTemplate           String?  @default("{album.artist}/{album.title}/{item.number:02d}. {item.title}")
   musicPath                   String?  @default("/music")
   downloadPath                String?  @default("/downloads")
   autoSync                    Boolean  @default(true)

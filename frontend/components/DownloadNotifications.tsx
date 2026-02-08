@@ -377,6 +377,8 @@ function DownloadJobItem({
                 return "text-purple-400";
             case "soulseek":
                 return "text-teal-400";
+            case "tidal":
+                return "text-cyan-400";
             default:
                 return "text-white/60";
         }
@@ -499,6 +501,8 @@ function DownloadJobItemCompact({
                 return "text-purple-400";
             case "soulseek":
                 return "text-teal-400";
+            case "tidal":
+                return "text-cyan-400";
             default:
                 return "text-white/60";
         }

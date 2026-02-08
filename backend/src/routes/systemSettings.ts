@@ -73,8 +73,17 @@ const systemSettingsSchema = z.object({
     soulseekConcurrentDownloads: z.number().min(1).max(10).optional(),
 
     // Download Preferences
-    downloadSource: z.enum(["soulseek", "lidarr"]).optional(),
-    primaryFailureFallback: z.enum(["none", "lidarr", "soulseek"]).optional(),
+    downloadSource: z.enum(["soulseek", "lidarr", "tidal"]).optional(),
+    primaryFailureFallback: z.enum(["none", "lidarr", "soulseek", "tidal"]).optional(),
+
+    // TIDAL
+    tidalEnabled: z.boolean().optional(),
+    tidalAccessToken: z.string().nullable().optional(),
+    tidalRefreshToken: z.string().nullable().optional(),
+    tidalUserId: z.string().nullable().optional(),
+    tidalCountryCode: z.string().nullable().optional(),
+    tidalQuality: z.enum(["LOW", "HIGH", "LOSSLESS", "HI_RES_LOSSLESS"]).optional(),
+    tidalFileTemplate: z.string().nullable().optional(),
 });
 
 // GET /system-settings
@@ -119,6 +128,8 @@ router.get("/", async (req, res) => {
             audiobookshelfApiKey: safeDecrypt(settings.audiobookshelfApiKey),
             soulseekPassword: safeDecrypt(settings.soulseekPassword),
             spotifyClientSecret: safeDecrypt(settings.spotifyClientSecret),
+            tidalAccessToken: safeDecrypt(settings.tidalAccessToken),
+            tidalRefreshToken: safeDecrypt(settings.tidalRefreshToken),
         };
 
         res.json(decryptedSettings);
@@ -164,6 +175,10 @@ router.post("/", async (req, res) => {
             encryptedData.spotifyClientSecret = encrypt(
                 data.spotifyClientSecret
             );
+        if (data.tidalAccessToken)
+            encryptedData.tidalAccessToken = encrypt(data.tidalAccessToken);
+        if (data.tidalRefreshToken)
+            encryptedData.tidalRefreshToken = encrypt(data.tidalRefreshToken);
 
         const settings = await prisma.systemSettings.upsert({
             where: { id: "default" },
@@ -738,6 +753,99 @@ router.post("/test-spotify", async (req, res) => {
             error: "Failed to test Spotify credentials",
             details: error.message,
         });
+    }
+});
+
+// Test TIDAL connection — initiate device auth or verify existing session
+router.post("/test-tidal", async (req, res) => {
+    try {
+        const { tidalService } = await import("../services/tidal");
+
+        // First check if the sidecar is reachable
+        const healthy = await tidalService.isSidecarHealthy();
+        if (!healthy) {
+            return res.status(503).json({
+                error: "TIDAL service is not running",
+                details: "The tidal-downloader container is not reachable. Make sure it is running.",
+            });
+        }
+
+        // Try to verify existing session
+        const session = await tidalService.verifySession();
+        if (session.valid) {
+            return res.json({
+                success: true,
+                message: `Connected to TIDAL (user: ${session.userId})`,
+            });
+        }
+
+        // No valid session — return info so the UI can trigger device auth
+        return res.status(401).json({
+            error: "Not authenticated to TIDAL",
+            details: "Use the TIDAL settings panel to authenticate via device authorization.",
+        });
+    } catch (error: any) {
+        logger.error("[TIDAL-TEST] Error:", error.message);
+        res.status(500).json({
+            error: "Failed to test TIDAL connection",
+            details: error.message,
+        });
+    }
+});
+
+// TIDAL device auth — Step 1: get device code
+router.post("/tidal-auth/device", async (req, res) => {
+    try {
+        const { tidalService } = await import("../services/tidal");
+
+        const healthy = await tidalService.isSidecarHealthy();
+        if (!healthy) {
+            return res.status(503).json({
+                error: "TIDAL service is not running",
+            });
+        }
+
+        const deviceAuth = await tidalService.initiateDeviceAuth();
+        res.json(deviceAuth);
+    } catch (error: any) {
+        logger.error("[TIDAL-AUTH] Device auth error:", error.message);
+        res.status(500).json({ error: "Failed to initiate TIDAL auth", details: error.message });
+    }
+});
+
+// TIDAL device auth — Step 2: poll for token
+router.post("/tidal-auth/token", async (req, res) => {
+    try {
+        const { device_code } = req.body;
+        if (!device_code) {
+            return res.status(400).json({ error: "device_code is required" });
+        }
+
+        const { tidalService } = await import("../services/tidal");
+        const tokens = await tidalService.pollDeviceAuth(device_code);
+
+        if (!tokens) {
+            // User hasn't authorised yet
+            return res.status(202).json({ status: "pending" });
+        }
+
+        // Save tokens to database
+        await tidalService.saveTokens({
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            userId: tokens.user_id,
+            countryCode: tokens.country_code,
+        });
+
+        res.json({
+            success: true,
+            user_id: tokens.user_id,
+            country_code: tokens.country_code,
+            username: tokens.username,
+        });
+    } catch (error: any) {
+        logger.error("[TIDAL-AUTH] Token exchange error:", error.message);
+        res.status(500).json({ error: "Failed to complete TIDAL auth", details: error.message });
     }
 });
 

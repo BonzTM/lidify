@@ -479,7 +479,6 @@ class ApiClient {
         limit?: number;
         offset?: number;
         filter?: "owned" | "discovery" | "all";
-        sortBy?: string;
     }) {
         return this.request<{
             artists: ApiData[];
@@ -534,7 +533,6 @@ class ApiClient {
         limit?: number;
         offset?: number;
         filter?: "owned" | "discovery" | "all";
-        sortBy?: string;
     }) {
         return this.request<{
             albums: ApiData[];
@@ -552,7 +550,6 @@ class ApiClient {
         albumId?: string;
         limit?: number;
         offset?: number;
-        sortBy?: string;
     }) {
         return this.request<{
             tracks: ApiData[];
@@ -937,6 +934,38 @@ class ApiClient {
         });
     }
 
+    async testTidal() {
+        return this.request<ServiceTestResult>("/system-settings/test-tidal", {
+            method: "POST",
+        });
+    }
+
+    async tidalDeviceAuth() {
+        return this.request<{
+            device_code: string;
+            user_code: string;
+            verification_uri: string;
+            verification_uri_complete: string;
+            expires_in: number;
+            interval: number;
+        }>("/system-settings/tidal-auth/device", {
+            method: "POST",
+        });
+    }
+
+    async tidalPollAuth(deviceCode: string) {
+        return this.request<{
+            status?: "pending";
+            success?: boolean;
+            user_id?: string;
+            country_code?: string;
+            username?: string;
+        }>("/system-settings/tidal-auth/token", {
+            method: "POST",
+            body: JSON.stringify({ device_code: deviceCode }),
+        });
+    }
+
     async testListenNotes(apiKey: string) {
         return this.request<ServiceTestResult>("/system-settings/test-listennotes", {
             method: "POST",
@@ -997,6 +1026,7 @@ class ApiClient {
             enabled: boolean;
             lidarr: boolean;
             soulseek: boolean;
+            tidal: boolean;
         }>("/downloads/availability");
     }
 
@@ -1401,22 +1431,10 @@ class ApiClient {
         limit: number = 20,
         signal?: AbortSignal
     ) {
-        return this.request<{
-            results: ApiData[];
-            aliasInfo: { original: string; canonical: string; mbid?: string } | null;
-        }>(
-            `/search/discover?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}`,
-            { signal }
-        );
-    }
-
-    async discoverSimilarArtists(
-        artist: string,
-        mbid: string = "",
-        signal?: AbortSignal
-    ) {
-        return this.request<{ similarArtists: ApiData[] }>(
-            `/search/discover/similar?artist=${encodeURIComponent(artist)}&mbid=${encodeURIComponent(mbid)}`,
+        return this.request<ApiData>(
+            `/search/discover?q=${encodeURIComponent(
+                query
+            )}&type=${type}&limit=${limit}`,
             { signal }
         );
     }
@@ -1629,7 +1647,6 @@ class ApiClient {
                 total: number;
                 completed: number;
                 pending: number;
-                processing: number;
                 failed: number;
                 progress: number;
                 isBackground: boolean;

@@ -29,8 +29,8 @@ Thanks for your patience while I work through this.
 -   [Quick Start](#quick-start)
 -   [Configuration](#configuration)
 -   [CLAP Audio Analysis](#clap-audio-analysis)
--   [GPU Acceleration](#gpu-acceleration)
 -   [Integrations](#integrations)
+-   [Kubernetes Deployment](#kubernetes-deployment)
 -   [Using Lidify](#using-lidify)
 -   [Administration](#administration)
 -   [Architecture](#architecture)
@@ -211,18 +211,6 @@ docker run -d \
 
 That's it! Open http://localhost:3030 and create your account.
 
-**With GPU acceleration** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
-
-```bash
-docker run -d \
-  --name lidify \
-  --gpus all \
-  -p 3030:3030 \
-  -v /path/to/your/music:/music \
-  -v lidify_data:/data \
-  chevron7locked/lidify:latest
-```
-
 ### What's Included
 
 The Lidify container includes everything you need:
@@ -348,9 +336,6 @@ The unified Lidify container handles most configuration automatically. Here are 
 | `LIDIFY_CALLBACK_URL`               | `http://host.docker.internal:3030` | URL for Lidarr webhook callbacks (see [Lidarr integration](#lidarr))        |
 | `AUDIO_ANALYSIS_WORKERS`            | `2`                                | Number of parallel workers for audio analysis (1-8)                         |
 | `AUDIO_ANALYSIS_THREADS_PER_WORKER` | `1`                                | Threads per worker for TensorFlow/FFT operations (1-4)                      |
-| `AUDIO_ANALYSIS_BATCH_SIZE`         | `10`                               | Tracks per analysis batch                                                   |
-| `AUDIO_BRPOP_TIMEOUT`              | `30`                               | Redis blocking wait timeout in seconds (also controls DB reconciliation)     |
-| `AUDIO_MODEL_IDLE_TIMEOUT`         | `300`                              | Seconds before unloading idle ML models to free memory (0 = never unload)    |
 | `LOG_LEVEL`                         | `warn` (prod) / `debug` (dev)      | Logging verbosity: debug, info, warn, error, silent                         |
 | `DOCS_PUBLIC`                       | `false`                            | Set to `true` to allow public access to API docs in production              |
 
@@ -455,7 +440,13 @@ Environment variables in docker-compose.yml:
 
 ### Usage
 
-The CLAP analyzer runs automatically alongside the main audio analyzer. The vibe button uses CLAP embeddings for finding similar tracks. Text-based vibe search is available at `/api/vibe/search`.
+Enable with the audio-analysis profile:
+
+```bash
+docker compose --profile audio-analysis up -d
+```
+
+The vibe button uses CLAP embeddings for finding similar tracks. Text-based vibe search is available at `/api/vibe/search`.
 
 ### API Endpoints
 
@@ -464,78 +455,6 @@ The CLAP analyzer runs automatically alongside the main audio analyzer. The vibe
 | `/api/vibe/similar/:trackId`   | GET    | Get tracks similar to the given track      |
 | `/api/vibe/search`             | POST   | Search tracks by text description          |
 | `/api/vibe/status`             | GET    | Get embedding progress                     |
-
----
-
-## GPU Acceleration
-
-GPU acceleration speeds up audio analysis (mood detection, BPM extraction, vibe embeddings). It is **optional** -- everything works on CPU, just slower.
-
-### Requirements
-
--   NVIDIA GPU with CUDA support
--   NVIDIA drivers installed on the host (`nvidia-smi` should work)
--   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) -- bridges Docker to your GPU
-
-### Install NVIDIA Container Toolkit
-
-The toolkit is required for any Docker container to access the GPU. Install it once:
-
-**Fedora / Nobara / RHEL:**
-```bash
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo && sudo dnf install -y nvidia-container-toolkit && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
-```
-
-**Ubuntu / Debian:**
-```bash
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
-```
-
-### Verify Host Setup
-
-```bash
-# Check NVIDIA driver
-nvidia-smi
-
-# Check container toolkit
-nvidia-container-runtime --version
-```
-
-### Enable GPU
-
-**All-in-One container:**
-```bash
-docker run -d --gpus all -p 3030:3030 -v /path/to/music:/music -v lidify_data:/data chevron7locked/lidify:latest
-```
-
-**Docker Compose:**
-
-Uncomment the `devices` block under `audio-analyzer` (and optionally `audio-analyzer-clap`) in `docker-compose.yml`:
-
-```yaml
-reservations:
-    memory: 2G
-    devices:
-        - driver: nvidia
-          count: 1
-          capabilities: [gpu]
-```
-
-Then restart: `docker compose up -d`
-
-### Verify GPU Detection
-
-```bash
-# MusiCNN analyzer
-docker logs lidify_audio_analyzer 2>&1 | grep -i gpu
-
-# CLAP analyzer
-docker logs lidify_audio_analyzer_clap 2>&1 | grep -i gpu
-```
-
-Expected: `TensorFlow GPU detected: ...` or `CUDA available: True`
-
-If you see `TensorFlow running on CPU`, GPU passthrough is not active.
 
 ---
 
@@ -630,6 +549,162 @@ You can also configure Soulseek as a download source for playlist imports. In Se
 - Not all tracks will have results -- Soulseek coverage varies by genre and popularity
 - Some users may have slow connections or go offline during transfers
 - Lidify retries with alternative users if a download fails or times out
+
+### TIDAL
+
+Connect your TIDAL account to download high-quality music directly from the TIDAL catalog.
+
+**What you get:**
+
+-   Download individual tracks or full albums from TIDAL
+-   Quality options from AAC 96 kbps up to Hi-Res FLAC (24-bit / 192 kHz)
+-   Customizable file naming templates
+-   Can be used as a primary download source or fallback alongside Soulseek and Lidarr
+
+**Requirements:**
+
+-   A TIDAL account (HiFi Plus for Hi-Res quality)
+-   The `tidal-downloader` container must be running
+
+**Setup:**
+
+1. Start the `tidal-downloader` service (included in `docker-compose.yml`)
+2. Go to Settings in Lidify
+3. Navigate to the TIDAL section
+4. Enable TIDAL and click **Authenticate with TIDAL**
+5. Approve the device code on the TIDAL website when prompted
+6. Choose your preferred download quality and file naming template
+7. Save your settings
+
+**File Naming Template:**
+
+Customize how downloaded files are organized using template variables. Use `/` to create folder structure.
+
+*Track / Item variables:*
+
+| Variable                        | Description                                        | Example                        |
+| ------------------------------- | -------------------------------------------------- | ------------------------------ |
+| `{item.number}`                 | Track number (use `{item.number:02d}` to pad)      | `4` / `04`                     |
+| `{item.volume}`                 | Disc / volume number                               | `1`                            |
+| `{item.title}`                  | Track title                                        | `Time`                         |
+| `{item.title_version}`          | Title + version if present                         | `One More Time (Radio Edit)`   |
+| `{item.artist}`                 | Primary artist                                     | `Pink Floyd`                   |
+| `{item.artists}`                | All main artists (comma-separated)                 | `Daft Punk, Pharrell Williams` |
+| `{item.features}`               | Featured artists                                   | `Pharrell Williams`            |
+| `{item.artists_with_features}`  | Main + featured artists                            | `Daft Punk, Pharrell Williams` |
+| `{item.version}`                | Version string                                     | `Remastered`                   |
+| `{item.quality}`                | Audio quality level                                | `LOSSLESS`                     |
+| `{item.isrc}`                   | ISRC code                                          | `USQX91501234`                 |
+| `{item.bpm}`                    | BPM (if available)                                 | `120`                          |
+| `{item.explicit}`               | Explicit flag                                      | `E` (blank if clean)           |
+
+*Album variables:*
+
+| Variable                        | Description                                        | Example                        |
+| ------------------------------- | -------------------------------------------------- | ------------------------------ |
+| `{album.artist}`                | Album artist                                       | `Pink Floyd`                   |
+| `{album.artists}`               | All album artists                                  | `Pink Floyd`                   |
+| `{album.title}`                 | Album title                                        | `The Dark Side of the Moon`    |
+| `{album.date:%Y}`               | Release date (formattable)                         | `1973`                         |
+| `{album.release}`               | Release type                                       | `ALBUM` / `EP` / `SINGLE`     |
+| `{album.explicit}`              | Explicit flag                                      | `E` (blank if clean)           |
+
+*Template examples:*
+
+```text
+# Default — Artist/Album/## Title
+{album.artist}/{album.title}/{item.number:02d}. {item.title}
+→ Pink Floyd/The Dark Side of the Moon/04. Time
+
+# Disc-Track numbering
+{album.artist}/{album.title}/{item.volume}-{item.number:02d} {item.title}
+→ Pink Floyd/The Wall/1-04 The Happiest Days of Our Lives
+
+# With release year
+{album.artist}/{album.title} ({album.date:%Y})/{item.number:02d}. {item.title}
+→ Pink Floyd/The Dark Side of the Moon (1973)/04. Time
+
+# Flat (no folders)
+{item.artist} - {item.title}
+→ Pink Floyd - Time
+```
+
+Default template: `{album.artist}/{album.title}/{item.number:02d}. {item.title}`
+
+**Environment Variables:**
+
+The `tidal-downloader` service accepts the following optional environment variables:
+
+| Variable            | Default        | Description                                                                 |
+| ------------------- | -------------- | --------------------------------------------------------------------------- |
+| `TIDAL_TRACK_DELAY` | `3`            | Seconds to wait between each track download to avoid TIDAL API rate limits. |
+| `MUSIC_PATH`        | `/music`       | Path where downloaded music is written inside the container.                |
+| `TIDDL_PATH`        | `/data/.tiddl` | Path for tiddl library cache/config.                                        |
+| `DEBUG`             | _(unset)_      | Set to any value to enable debug-level logging.                             |
+
+> **Tip:** If you're downloading very large libraries, consider increasing `TIDAL_TRACK_DELAY` to `5` or higher. Set to `0` to disable the delay (not recommended — may result in temporary API bans).
+
+**Nightly Image:**
+
+```bash
+docker pull ghcr.io/chevron7locked/lidify-tidal-downloader:nightly
+```
+
+---
+
+## Kubernetes Deployment
+
+Lidify's microservices can be deployed on Kubernetes. Each service publishes a container image to GHCR with the `:nightly` tag.
+
+### Container Images
+
+| Service              | Image                                                          | Port  |
+| -------------------- | -------------------------------------------------------------- | ----- |
+| Backend              | `ghcr.io/chevron7locked/lidify-backend:nightly`                | 3006  |
+| Frontend             | `ghcr.io/chevron7locked/lidify-frontend:nightly`               | 3030  |
+| Audio Analyzer       | `ghcr.io/chevron7locked/lidify-audio-analyzer:nightly`         | —     |
+| Audio Analyzer CLAP  | `ghcr.io/chevron7locked/lidify-audio-analyzer-clap:nightly`    | —     |
+| TIDAL Downloader     | `ghcr.io/chevron7locked/lidify-tidal-downloader:nightly`       | 8585  |
+
+### Storage Classes (RWX vs RWO)
+
+When creating PersistentVolumeClaims for Kubernetes, choose the correct access mode based on how the volume is shared.
+
+| Volume          | Access Mode          | Reason                                                                                                  |
+| --------------- | -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `music`         | **ReadWriteMany** (RWX) | Shared across backend, tidal-downloader, audio-analyzer, and audio-analyzer-clap pods. Multiple pods read and write concurrently. |
+| `downloads`     | ReadWriteOnce (RWO)  | Lidarr download staging area. Only Lidarr's download clients (qBittorrent/SABnzbd) write here.          |
+| `postgres_data` | ReadWriteOnce (RWO)  | Single PostgreSQL pod. Never shared.                                                                    |
+| `backend_cache` | ReadWriteOnce (RWO)  | Transcode cache local to the backend pod.                                                               |
+| `backend_logs`  | ReadWriteOnce (RWO)  | Log files local to the backend pod.                                                                     |
+| `tidal_data`    | ReadWriteOnce (RWO)  | tiddl library config/cache. Only the tidal-downloader pod accesses this.                                |
+
+> **Tip:** RWX volumes require a storage provisioner that supports it (e.g., NFS, CephFS, Longhorn, EFS). The only RWX volume required is `music`. If your cluster only supports RWO, you can run the backend and tidal-downloader as containers in the same pod to share the `/music` mount.
+
+### Security Context
+
+All Lidify microservice images run as non-root (UID 1000). A recommended `securityContext` for pods:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  readOnlyRootFilesystem: true
+```
+
+The tidal-downloader image uses `tini` as PID 1 for proper signal handling (SIGTERM from Kubernetes during pod eviction). All images include a `/health` or healthcheck endpoint suitable for `livenessProbe` and `readinessProbe` configuration.
+
+### Resource Recommendations
+
+| Service              | CPU Request | CPU Limit | Memory Request | Memory Limit |
+| -------------------- | ----------- | --------- | -------------- | ------------ |
+| Backend              | 250m        | 2000m     | 256Mi          | 1Gi          |
+| Frontend             | 100m        | 1000m     | 128Mi          | 512Mi        |
+| TIDAL Downloader     | 100m        | 2000m     | 128Mi          | 512Mi        |
+| Audio Analyzer       | 500m        | 4000m     | 1Gi            | 6Gi          |
+| Audio Analyzer CLAP  | 500m        | 4000m     | 1Gi            | 3Gi          |
 
 ---
 
@@ -864,14 +939,15 @@ Lidify consists of several components working together:
                                  └─────────────────────┘
 ```
 
-| Component           | Purpose                                    | Default Port |
-| ------------------- | ------------------------------------------ | ------------ |
-| Frontend            | Web interface (Next.js)                    | 3030         |
-| Backend             | API server (Express.js)                    | 3006         |
-| PostgreSQL          | Database (with pgvector)                   | 5432         |
-| Redis               | Caching and job queues                     | 6379         |
-| Audio Analyzer      | Mood, BPM, key detection (Essentia MusiCNN)| --           |
-| Audio Analyzer CLAP | Vibe similarity embeddings (LAION CLAP)    | --           |
+| Component          | Purpose                          | Default Port |
+| ------------------ | -------------------------------- | ------------ |
+| Frontend           | Web interface (Next.js)          | 3030         |
+| Backend            | API server (Express.js)          | 3006         |
+| PostgreSQL         | Database                         | 5432         |
+| Redis              | Caching and job queues           | 6379         |
+| TIDAL Downloader   | TIDAL download sidecar (FastAPI) | 8585         |
+| Audio Analyzer     | MusiCNN audio analysis           | —            |
+| Audio Analyzer CLAP| CLAP embedding generation        | —            |
 
 ---
 

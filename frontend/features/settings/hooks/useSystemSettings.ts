@@ -20,6 +20,13 @@ const defaultSystemSettings: SystemSettings = {
     soulseekPassword: "",
     spotifyClientId: "",
     spotifyClientSecret: "",
+    tidalEnabled: false,
+    tidalAccessToken: "",
+    tidalRefreshToken: "",
+    tidalUserId: "",
+    tidalCountryCode: "US",
+    tidalQuality: "HIGH",
+    tidalFileTemplate: "{album.artist}/{album.title}/{item.number:02d}. {item.title}",
     musicPath: "/music",
     downloadPath: "/downloads",
     transcodeCacheMaxGb: 10,
@@ -129,6 +136,11 @@ export function useSystemSettings() {
             ) {
                 changed.push("Audiobookshelf");
             }
+            if (
+                originalSettings.tidalEnabled !== settingsToSave.tidalEnabled
+            ) {
+                changed.push("TIDAL");
+            }
 
             setChangedServices(changed);
             setOriginalSettings(settingsToSave);
@@ -190,6 +202,9 @@ export function useSystemSettings() {
                         systemSettings.spotifyClientId,
                         systemSettings.spotifyClientSecret
                     );
+                    break;
+                case "tidal":
+                    result = await api.testTidal();
                     break;
                 default:
                     throw new Error(`Unknown service: ${service}`);
