@@ -134,13 +134,20 @@ export function YouTubeMusicSection({ settings, onUpdate }: YouTubeMusicSectionP
         return () => clearInterval(interval);
     }, [expiresAt, polling]);
 
-    // Polling effect
+    // Polling effect — uses recursive setTimeout so the next poll only
+    // starts after the previous one completes (prevents overlapping requests
+    // that cause the device code to be consumed then re-used → invalid_grant)
     useEffect(() => {
         if (!polling || !deviceCode) return;
 
-        const interval = setInterval(async () => {
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout>;
+
+        const poll = async () => {
+            if (cancelled) return;
             try {
                 const result = await api.pollYtMusicAuth(deviceCode);
+                if (cancelled) return;
 
                 if (result.status === "success") {
                     setPolling(false);
@@ -151,6 +158,7 @@ export function YouTubeMusicSection({ settings, onUpdate }: YouTubeMusicSectionP
                     setSuccess("YouTube Music account connected successfully!");
                     setError(null);
                     await checkStatus();
+                    return; // done — don't schedule another poll
                 } else if (result.status === "error") {
                     setPolling(false);
                     setDeviceCode(null);
@@ -158,15 +166,25 @@ export function YouTubeMusicSection({ settings, onUpdate }: YouTubeMusicSectionP
                     setVerificationUrl(null);
                     setExpiresAt(null);
                     setError(result.error || "Authorization failed. Please try again.");
+                    return; // done — don't schedule another poll
                 }
-                // "pending" — keep polling
+                // "pending" — schedule next poll
             } catch (err: any) {
                 // Don't stop polling on transient errors
                 console.debug("Poll error (retrying):", err);
             }
-        }, 5000); // Poll every 5 seconds
+            if (!cancelled) {
+                timer = setTimeout(poll, 5000);
+            }
+        };
 
-        return () => clearInterval(interval);
+        // First poll after a 5-second delay
+        timer = setTimeout(poll, 5000);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
     }, [polling, deviceCode]);
 
     const checkStatus = useCallback(async () => {
