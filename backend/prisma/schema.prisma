@@ -198,7 +198,7 @@ model Track {
   searchVector       Unsupported("tsvector")?
   filePath           String                   @unique
   fileModified       DateTime
-  fileSize           Int
+  fileSize           BigInt
   bpm                Float?
   beatsCount         Int?
   key                String?

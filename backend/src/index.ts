@@ -8,6 +8,12 @@ import { redisClient } from "./utils/redis";
 import { prisma } from "./utils/db";
 import { logger } from "./utils/logger";
 
+// BigInt values from Prisma (e.g. Track.fileSize) must be serialisable to JSON.
+// Without this polyfill, JSON.stringify throws "Do not know how to serialize a BigInt".
+(BigInt.prototype as any).toJSON = function () {
+    return Number(this);
+};
+
 import authRoutes from "./routes/auth";
 import onboardingRoutes from "./routes/onboarding";
 import libraryRoutes from "./routes/library";
