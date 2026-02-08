@@ -12,6 +12,7 @@ import { useDownloadContext } from "@/lib/download-context";
 // Custom hooks
 import { useAlbumData } from "@/features/album/hooks/useAlbumData";
 import { useAlbumActions } from "@/features/album/hooks/useAlbumActions";
+import { useYtMusicGapFill } from "@/features/album/hooks/useYtMusicGapFill";
 import { useTrackPreview } from "@/hooks/useTrackPreview";
 import type { Track as AlbumTrack } from "@/features/album/types";
 
@@ -42,11 +43,15 @@ export default function AlbumPage({ params }: AlbumPageProps) {
     const [, setIsAddingToPlaylist] = useState(false);
 
     // Custom hooks
-    const { album, source, loading, reloadAlbum } = useAlbumData(id);
+    const { album: rawAlbum, source, loading, reloadAlbum } = useAlbumData(id);
+    const { enrichedTracks } = useYtMusicGapFill(rawAlbum, source);
     const { playAlbum, shufflePlay, addToQueue, downloadAlbum } =
         useAlbumActions();
     const { isPendingByMbid } = useDownloadContext();
     const { previewTrack, previewPlaying, handlePreview } = useTrackPreview();
+
+    // Use enriched tracks (with YTMusic gap-fill) when available
+    const album = rawAlbum ? { ...rawAlbum, tracks: enrichedTracks || rawAlbum.tracks } : rawAlbum;
 
     // Get cover URL for display and color extraction
     // Proxy through API to handle native: URLs and CORS
