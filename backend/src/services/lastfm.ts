@@ -606,6 +606,32 @@ class LastFmService {
         );
     }
 
+    async enrichSimilarArtists(similar: SimilarArtist[], limit = 6) {
+        const capped = similar.slice(0, limit);
+        const enrichCount = Math.min(3, capped.length);
+
+        const [enriched, fast] = await Promise.all([
+            Promise.all(
+                capped.slice(0, enrichCount).map((s) =>
+                    this.buildArtistSearchResult(
+                        { name: s.name, mbid: s.mbid, listeners: 0, url: s.url, image: [] },
+                        true
+                    )
+                )
+            ),
+            Promise.all(
+                capped.slice(enrichCount).map((s) =>
+                    this.buildArtistSearchResult(
+                        { name: s.name, mbid: s.mbid, listeners: 0, url: s.url, image: [] },
+                        false
+                    )
+                )
+            ),
+        ]);
+
+        return [...enriched, ...fast].filter(Boolean);
+    }
+
     private async buildArtistSearchResult(artist: any, enrich: boolean) {
         const baseResult = {
             type: "music",
@@ -752,7 +778,7 @@ class LastFmService {
                 })
                 .filter(({ similarity, wordMatches }: { similarity: number; wordMatches: number }) => {
                     if (!queryLower) return true;
-                    return similarity >= 50 || wordMatches >= minWordMatches;
+                    return similarity >= 75 || wordMatches >= minWordMatches;
                 })
                 .sort((a: any, b: any) => {
                     return (
@@ -772,42 +798,6 @@ class LastFmService {
                 }
 
                 uniqueArtists.push(artist);
-            }
-
-            if (uniqueArtists.length > 0 && uniqueArtists.length < limit) {
-                const primaryArtist = uniqueArtists[0];
-                try {
-                    const fallbackSimilar = await this.getSimilarArtists(
-                        primaryArtist.mbid || "",
-                        primaryArtist.name,
-                        limit * 2
-                    );
-
-                    for (const similar of fallbackSimilar) {
-                        if (uniqueArtists.length >= limit) {
-                            break;
-                        }
-
-                        const candidate = {
-                            name: similar.name,
-                            mbid: similar.mbid,
-                            listeners: 0,
-                            url: similar.url,
-                            image: [],
-                        };
-
-                        if (this.isDuplicateArtist(uniqueArtists, candidate)) {
-                            continue;
-                        }
-
-                        uniqueArtists.push(candidate);
-                    }
-                } catch (error) {
-                    logger.warn(
-                        "[LAST.FM SEARCH] Similar artist fallback failed:",
-                        error
-                    );
-                }
             }
 
             const limitedArtists = uniqueArtists.slice(0, limit);

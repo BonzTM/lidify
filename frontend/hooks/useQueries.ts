@@ -68,6 +68,8 @@ export const queryKeys = {
         ["search", query, type, limit] as const,
     discoverSearch: (query: string, type?: string, limit?: number) =>
         ["search", "discover", query, type, limit] as const,
+    discoverSimilar: (artist: string, mbid: string) =>
+        ["search", "discover", "similar", artist, mbid] as const,
 
     // Playlists
     playlists: () => ["playlists"] as const,
@@ -338,50 +340,6 @@ interface TracksPageResponse {
     limit: number;
 }
 
-// Sort functions - defined once outside components to prevent recreation
-const sortArtists = (artists: Artist[], sortBy: SortOption): Artist[] => {
-    return [...artists].sort((a, b) => {
-        switch (sortBy) {
-            case "name":
-                return a.name.localeCompare(b.name);
-            case "name-desc":
-                return b.name.localeCompare(a.name);
-            case "tracks":
-                return (b.trackCount || 0) - (a.trackCount || 0);
-            default:
-                return 0;
-        }
-    });
-};
-
-const sortAlbums = (albums: Album[], sortBy: SortOption): Album[] => {
-    return [...albums].sort((a, b) => {
-        switch (sortBy) {
-            case "name":
-                return a.title.localeCompare(b.title);
-            case "name-desc":
-                return b.title.localeCompare(a.title);
-            case "recent":
-                return (b.year || 0) - (a.year || 0);
-            default:
-                return 0;
-        }
-    });
-};
-
-const sortTracks = (tracks: Track[], sortBy: SortOption): Track[] => {
-    return [...tracks].sort((a, b) => {
-        switch (sortBy) {
-            case "name":
-                return a.title.localeCompare(b.title);
-            case "name-desc":
-                return b.title.localeCompare(a.title);
-            default:
-                return 0;
-        }
-    });
-};
-
 /**
  * Hook to fetch library artists with pagination and filtering
  *
@@ -397,9 +355,9 @@ export function useLibraryArtistsQuery({
     const offset = (page - 1) * limit;
     return useQuery({
         queryKey: queryKeys.libraryArtists({ filter, sortBy, limit, offset }),
-        queryFn: () => api.getArtists({ limit, offset, filter }),
+        queryFn: () => api.getArtists({ limit, offset, filter, sortBy }),
         select: (response) => ({
-            artists: sortArtists(response.artists, sortBy),
+            artists: response.artists,
             total: response.total,
             offset: response.offset,
             limit: response.limit,
@@ -430,9 +388,9 @@ export function useLibraryAlbumsInfiniteQuery(
         queryKey: queryKeys.libraryAlbums({ filter, sortBy, limit }),
         queryFn: async ({ pageParam }) => {
             const offset = (pageParam - 1) * limit;
-            const response = await api.getAlbums({ limit, offset, filter });
+            const response = await api.getAlbums({ limit, offset, filter, sortBy });
             return {
-                albums: sortAlbums(response.albums, sortBy),
+                albums: response.albums,
                 total: response.total,
                 offset: response.offset,
                 limit: response.limit,
@@ -465,9 +423,9 @@ export function useLibraryArtistsInfiniteQuery(
         queryKey: queryKeys.libraryArtists({ filter, sortBy, limit }),
         queryFn: async ({ pageParam }) => {
             const offset = (pageParam - 1) * limit;
-            const response = await api.getArtists({ limit, offset, filter });
+            const response = await api.getArtists({ limit, offset, filter, sortBy });
             return {
-                artists: sortArtists(response.artists, sortBy),
+                artists: response.artists,
                 total: response.total,
                 offset: response.offset,
                 limit: response.limit,
@@ -498,9 +456,9 @@ export function useLibraryAlbumsQuery({
     const offset = (page - 1) * limit;
     return useQuery({
         queryKey: queryKeys.libraryAlbums({ filter, sortBy, limit, offset }),
-        queryFn: () => api.getAlbums({ limit, offset, filter }),
+        queryFn: () => api.getAlbums({ limit, offset, filter, sortBy }),
         select: (response) => ({
-            albums: sortAlbums(response.albums, sortBy),
+            albums: response.albums,
             total: response.total,
             offset: response.offset,
             limit: response.limit,
@@ -526,9 +484,9 @@ export function useLibraryTracksInfiniteQuery(
         queryKey: queryKeys.libraryTracks({ sortBy, limit }),
         queryFn: async ({ pageParam }) => {
             const offset = (pageParam - 1) * limit;
-            const response = await api.getTracks({ limit, offset });
+            const response = await api.getTracks({ limit, offset, sortBy });
             return {
-                tracks: sortTracks(response.tracks, sortBy),
+                tracks: response.tracks,
                 total: response.total,
                 offset: response.offset,
                 limit: response.limit,
@@ -558,9 +516,9 @@ export function useLibraryTracksQuery({
     const offset = (page - 1) * limit;
     return useQuery({
         queryKey: queryKeys.libraryTracks({ sortBy, limit, offset }),
-        queryFn: () => api.getTracks({ limit, offset }),
+        queryFn: () => api.getTracks({ limit, offset, sortBy }),
         select: (response) => ({
-            tracks: sortTracks(response.tracks, sortBy),
+            tracks: response.tracks,
             total: response.total,
             offset: response.offset,
             limit: response.limit,
@@ -689,6 +647,19 @@ export function useDiscoverSearchQuery(
         queryFn: ({ signal }) => api.discoverSearch(query, type, limit, signal),
         enabled: query.length >= 2,
         staleTime: 5 * 60 * 1000, // 5 minutes
+    });
+}
+
+/**
+ * Hook to fetch musically similar artists for a given artist.
+ * Fires only when artistName is non-empty (i.e. after discover results load).
+ */
+export function useDiscoverSimilarArtistsQuery(artistName: string, mbid: string = "") {
+    return useQuery({
+        queryKey: queryKeys.discoverSimilar(artistName, mbid),
+        queryFn: ({ signal }) => api.discoverSimilarArtists(artistName, mbid, signal),
+        enabled: artistName.length > 0,
+        staleTime: 30 * 60 * 1000, // 30 minutes -- similar artists rarely change
     });
 }
 

@@ -126,7 +126,7 @@ export function findSimilarTerms(
 ): Array<{ term: VocabTerm; similarity: number }> {
     const matches: Array<{ term: VocabTerm; similarity: number }> = [];
 
-    for (const [name, term] of Object.entries(vocab.terms)) {
+    for (const [, term] of Object.entries(vocab.terms)) {
         const similarity = cosineSimilarity(queryEmbedding, term.embedding);
         if (similarity >= minSimilarity) {
             matches.push({ term, similarity });

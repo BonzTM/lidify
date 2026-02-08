@@ -11,7 +11,7 @@ const router = Router();
 
 // Redis queue key for audio analysis
 const ANALYSIS_QUEUE = "audio:analysis:queue";
-const VIBE_QUEUE = "audio:analysis:queue"; // CLAP uses same queue
+const VIBE_QUEUE = "audio:clap:queue";
 
 /**
  * GET /api/analysis/status
@@ -391,8 +391,7 @@ router.get("/clap-workers", requireAuth, requireAdmin, async (req, res) => {
         const cpuCores = os.cpus().length;
         const currentWorkers = settings?.clapWorkers || 2;
 
-        // Recommended: 25% of CPU cores for CLAP (more memory intensive), min 1, max 4
-        const recommended = Math.max(1, Math.min(4, Math.floor(cpuCores / 4)));
+        const recommended = Math.max(1, Math.min(8, Math.floor(cpuCores / 2)));
 
         res.json({
             workers: currentWorkers,
@@ -414,9 +413,9 @@ router.put("/clap-workers", requireAuth, requireAdmin, async (req, res) => {
     try {
         const { workers } = req.body;
 
-        if (typeof workers !== 'number' || workers < 1 || workers > 4) {
+        if (typeof workers !== 'number' || workers < 1 || workers > 8) {
             return res.status(400).json({
-                error: "CLAP workers must be a number between 1 and 4"
+                error: "CLAP workers must be a number between 1 and 8"
             });
         }
 
@@ -433,7 +432,7 @@ router.put("/clap-workers", requireAuth, requireAdmin, async (req, res) => {
         );
 
         const cpuCores = os.cpus().length;
-        const recommended = Math.max(1, Math.min(4, Math.floor(cpuCores / 4)));
+        const recommended = Math.max(1, Math.min(8, Math.floor(cpuCores / 2)));
 
         logger.info(`CLAP analyzer workers updated to ${workers}`);
 
@@ -598,8 +597,6 @@ router.post("/vibe/retry", requireAuth, requireAdmin, async (req, res) => {
     }
 });
 
-export default router;
-
 /**
  * POST /api/analysis/vibe/success
  * Resolve failure records when a vibe embedding succeeds (called by CLAP analyzer)
@@ -627,3 +624,5 @@ router.post("/vibe/success", async (req, res) => {
         res.status(500).json({ error: "Failed to resolve failures" });
     }
 });
+
+export default router;

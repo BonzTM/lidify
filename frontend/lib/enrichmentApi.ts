@@ -216,7 +216,7 @@ export const enrichmentApi = {
     },
 
     /**
-     * Set CLAP analyzer worker count (1-4)
+     * Set CLAP analyzer worker count (1-8)
      */
     setClapWorkers: async (workers: number): Promise<AnalysisWorkersConfig> => {
         return api.request("/analysis/clap-workers", {

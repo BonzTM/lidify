@@ -13,6 +13,7 @@ import { LibraryPodcastsGrid } from "@/features/search/components/LibraryPodcast
 import { LibraryAudiobooksGrid } from "@/features/search/components/LibraryAudiobooksGrid";
 import { LibraryTracksList } from "@/features/search/components/LibraryTracksList";
 import { SimilarArtistsGrid } from "@/features/search/components/SimilarArtistsGrid";
+import { AliasResolutionBanner } from "@/features/search/components/AliasResolutionBanner";
 import { SoulseekSongsList } from "@/features/search/components/SoulseekSongsList";
 import { TVSearchInput } from "@/features/search/components/TVSearchInput";
 import type { FilterTab } from "@/features/search/types";
@@ -27,6 +28,8 @@ export default function SearchPage() {
     const {
         libraryResults,
         discoverResults,
+        similarArtists,
+        aliasInfo,
         isLibrarySearching,
         isDiscoverSearching,
         hasSearched,
@@ -90,6 +93,10 @@ export default function SearchPage() {
             />
 
             <div className="pb-24 space-y-12">
+                {hasSearched && aliasInfo && (
+                    <AliasResolutionBanner aliasInfo={aliasInfo} />
+                )}
+
                 <EmptyState hasSearched={hasSearched} isLoading={isLoading} />
 
                 {/* Loading spinner */}
@@ -339,12 +346,11 @@ export default function SearchPage() {
                         </section>
                     )}
 
-                {/* Similar Artists */}
+                {/* Related Artists */}
                 {hasSearched &&
                     showDiscover &&
-                    discoverResults.filter((r) => r.type === "music").length >
-                        1 && (
-                        <SimilarArtistsGrid discoverResults={discoverResults} />
+                    similarArtists.length > 0 && (
+                        <SimilarArtistsGrid similarArtists={similarArtists} />
                     )}
 
                 {/* No Results */}

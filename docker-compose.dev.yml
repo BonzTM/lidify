@@ -53,6 +53,8 @@ services:
             MUSIC_PATH: /music
             BATCH_SIZE: 10
             SLEEP_INTERVAL: 5
+            BRPOP_TIMEOUT: 10
+            MODEL_IDLE_TIMEOUT: 60
         volumes:
             # Mount your music library - UPDATE THIS PATH
             - "${MUSIC_PATH:-C:/Users/kevin/Music}:/music:ro"

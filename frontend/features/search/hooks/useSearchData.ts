@@ -1,6 +1,5 @@
-import { useSearchQuery, useDiscoverSearchQuery } from "@/hooks/useQueries";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import type { SearchResult, DiscoverResult } from "../types";
+import { useSearchQuery, useDiscoverSearchQuery, useDiscoverSimilarArtistsQuery } from "@/hooks/useQueries";
+import type { SearchResult, DiscoverResult, AliasInfo } from "../types";
 import { useMemo } from "react";
 
 interface UseSearchDataProps {
@@ -10,38 +9,57 @@ interface UseSearchDataProps {
 interface UseSearchDataReturn {
     libraryResults: SearchResult | null;
     discoverResults: DiscoverResult[];
+    similarArtists: DiscoverResult[];
+    aliasInfo: AliasInfo | null;
     isLibrarySearching: boolean;
     isDiscoverSearching: boolean;
     hasSearched: boolean;
 }
 
 export function useSearchData({ query }: UseSearchDataProps): UseSearchDataReturn {
-    // Debounce query to prevent excessive API calls during typing
-    const debouncedQuery = useDebouncedValue(query, 250);
-
     const {
         data: libraryResults,
         isLoading: isLibrarySearching,
         isFetching: isLibraryFetching
-    } = useSearchQuery(debouncedQuery, "all", 20);
+    } = useSearchQuery(query, "all", 20);
 
     const {
         data: discoverData,
         isLoading: isDiscoverSearching,
         isFetching: isDiscoverFetching
-    } = useDiscoverSearchQuery(debouncedQuery, "all", 20);
+    } = useDiscoverSearchQuery(query, "all", 20);
 
-    // Extract discover results
     const discoverResults = useMemo(() => {
         return discoverData?.results || [];
     }, [discoverData]);
 
-    // Track if user has searched (use original query for immediate UI feedback)
+    const aliasInfo = useMemo(() => {
+        return discoverData?.aliasInfo || null;
+    }, [discoverData]);
+
+    // Derive top artist for the similar artists query
+    const topArtist = useMemo(() => {
+        const first = discoverResults.find((r) => r.type === "music");
+        return first ? { name: first.name, mbid: first.mbid || "" } : null;
+    }, [discoverResults]);
+
+    // Separate query for similar artists -- fires after discover results load
+    const { data: similarData } = useDiscoverSimilarArtistsQuery(
+        topArtist?.name || "",
+        topArtist?.mbid || ""
+    );
+
+    const similarArtists = useMemo(() => {
+        return similarData?.similarArtists || [];
+    }, [similarData]);
+
     const hasSearched = query.trim().length >= 2;
 
     return {
         libraryResults: libraryResults || null,
         discoverResults,
+        similarArtists,
+        aliasInfo,
         isLibrarySearching: isLibrarySearching || isLibraryFetching,
         isDiscoverSearching: isDiscoverSearching || isDiscoverFetching,
         hasSearched,

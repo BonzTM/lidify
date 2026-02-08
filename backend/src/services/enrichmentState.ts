@@ -206,13 +206,7 @@ class EnrichmentStateService {
         await this.publisher.publish(ENRICHMENT_CONTROL_CHANNEL, "stop");
         await this.publisher.publish(AUDIO_CONTROL_CHANNEL, "stop");
 
-        logger.debug("[Enrichment State] Stopping...");
-
-        // Transition to idle after a delay (workers will clean up)
-        setTimeout(async () => {
-            await this.updateState({ status: "idle", currentPhase: null });
-            logger.debug("[Enrichment State] Stopped and idle");
-        }, 5000);
+        logger.debug("[Enrichment State] Stopping (worker will transition to idle when current item completes)...");
 
         return updated;
     }
