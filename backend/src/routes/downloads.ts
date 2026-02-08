@@ -146,14 +146,15 @@ router.post("/", async (req, res) => {
 
         // Check if at least one download service is available
         const settings = await getSystemSettings();
-        const [lidarrEnabled, tidalAvailable] = await Promise.all([
+        const [lidarrEnabled, soulseekAvailable, tidalAvailable] = await Promise.all([
             lidarrService.isEnabled(),
+            soulseekService.isAvailable(),
             tidalService.isAvailable(),
         ]);
 
-        if (!lidarrEnabled && !tidalAvailable) {
+        if (!lidarrEnabled && !soulseekAvailable && !tidalAvailable) {
             return res.status(400).json({
-                error: "No download service configured. Please set up Lidarr or TIDAL.",
+                error: "No download service configured. Please set up Lidarr, Soulseek, or TIDAL.",
             });
         }
 
@@ -565,11 +566,31 @@ async function processDownload(
 
         logger.debug(`Parsed: Artist="${parsedArtist}", Album="${parsedAlbum}"`);
 
-        // Check configured download source
+        // Check configured download source and service availability
         const settings = await getSystemSettings();
-        const downloadSource = settings?.downloadSource || "soulseek";
+        const configuredSource = settings?.downloadSource || "soulseek";
 
-        if (downloadSource === "tidal" && await tidalService.isAvailable()) {
+        const [tidalAvail, lidarrAvail, soulseekAvail] = await Promise.all([
+            tidalService.isAvailable(),
+            lidarrService.isEnabled(),
+            soulseekService.isAvailable(),
+        ]);
+
+        // Determine effective download source:
+        // 1. Use configured source if that service is available
+        // 2. Otherwise auto-detect: prefer Tidal > Soulseek > Lidarr
+        let effectiveSource = configuredSource;
+        if (configuredSource === "tidal" && !tidalAvail) {
+            effectiveSource = soulseekAvail ? "soulseek" : lidarrAvail ? "lidarr" : "soulseek";
+        } else if (configuredSource === "soulseek" && !soulseekAvail) {
+            effectiveSource = tidalAvail ? "tidal" : lidarrAvail ? "lidarr" : "soulseek";
+        } else if (configuredSource === "lidarr" && !lidarrAvail) {
+            effectiveSource = tidalAvail ? "tidal" : soulseekAvail ? "soulseek" : "lidarr";
+        }
+
+        logger.debug(`Download source: configured=${configuredSource}, effective=${effectiveSource}`);
+
+        if (effectiveSource === "tidal" && tidalAvail) {
             await processTidalDownload(jobId, parsedArtist, parsedAlbum, job.userId);
         } else {
             // Use simple download manager for Lidarr/Soulseek downloads
