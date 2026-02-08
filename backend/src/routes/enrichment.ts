@@ -354,15 +354,11 @@ router.post("/album/:id", async (req, res) => {
 /**
  * POST /enrichment/start
  * Start library-wide enrichment (runs in background)
+ * Delegates to the unified enrichment worker for consistent state tracking,
+ * failure recording, and pause/stop support.
  */
 router.post("/start", async (req, res) => {
     try {
-        const userId = req.user!.id;
-        const { notificationService } = await import(
-            "../services/notificationService"
-        );
-
-        // Check if enrichment is enabled in system settings
         const { prisma } = await import("../utils/db");
         const systemSettings = await prisma.systemSettings.findUnique({
             where: { id: "default" },
@@ -375,40 +371,10 @@ router.post("/start", async (req, res) => {
             });
         }
 
-        // Get user enrichment settings or use defaults
-        const settings = await enrichmentService.getSettings(userId);
-
-        // Override enabled flag with system setting
-        settings.enabled = true;
-
-        // Send notification that enrichment is starting
-        await notificationService.notifySystem(
-            userId,
-            "Library Enrichment Started",
-            "Enriching artist metadata in the background..."
-        );
-
-        // Start enrichment in background
-        enrichmentService
-            .enrichLibrary(userId)
-            .then(async () => {
-                // Send notification when complete
-                await notificationService.notifySystem(
-                    userId,
-                    "Library Enrichment Complete",
-                    "All artist metadata has been enriched"
-                );
-            })
-            .catch(async (error) => {
-                logger.error("Background enrichment failed:", error);
-                await notificationService.create({
-                    userId,
-                    type: "error",
-                    title: "Enrichment Failed",
-                    message:
-                        error.message || "Failed to enrich library metadata",
-                });
-            });
+        // Run via unified worker (handles state, failures, notifications)
+        runFullEnrichment().catch((err) => {
+            logger.error("Background enrichment failed:", err);
+        });
 
         res.json({
             success: true,

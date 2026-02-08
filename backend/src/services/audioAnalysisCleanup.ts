@@ -41,8 +41,9 @@ class AudioAnalysisCleanupService {
         resetCount: number,
         permanentlyFailedCount: number
     ): void {
-        const totalFailures = resetCount + permanentlyFailedCount;
-        this.failureCount += totalFailures;
+        // Count cleanup runs, not individual tracks -- a single batch of stale
+        // tracks shouldn't immediately trip the breaker
+        this.failureCount += 1;
         this.lastFailureTime = new Date();
 
         if (this.state === "half-open") {

@@ -36,6 +36,7 @@ export function TopBar() {
     const [lastScanTime, setLastScanTime] = useState<number>(0);
     const { toast } = useToast();
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
     const queryClient = useQueryClient();
 
     const { isPolling } = useJobStatus(scanJobId, "scan", {
@@ -151,6 +152,22 @@ export function TopBar() {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pathname]); // Only re-run when pathname changes
+
+    // Global "/" keyboard shortcut to focus search
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) {
+                    return;
+                }
+                e.preventDefault();
+                searchInputRef.current?.focus();
+            }
+        };
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, []);
 
     return (
         <header
@@ -278,6 +295,7 @@ export function TopBar() {
                             >
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                                 <input
+                                    ref={searchInputRef}
                                     type="text"
                                     value={searchQuery}
                                     onChange={(e) =>

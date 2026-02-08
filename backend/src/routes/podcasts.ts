@@ -4,6 +4,7 @@ import { requireAuth, requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { rssParserService } from "../services/rss-parser";
 import { podcastCacheService } from "../services/podcastCache";
+import { parseRangeHeader } from "../utils/rangeParser";
 import axios from "axios";
 import fs from "fs";
 
@@ -902,70 +903,32 @@ router.get("/:podcastId/episodes/:episodeId/stream", async (req, res) => {
                 }
 
                 if (range) {
-                    const [startStr, endStr] = range
-                        .replace(/bytes=/, "")
-                        .split("-");
-                    const start = parseInt(startStr, 10);
-                    const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+                    const parsed = parseRangeHeader(range, fileSize);
 
-                    // Validate range bounds
-                    if (start >= fileSize) {
+                    let start: number;
+                    let end: number;
+
+                    if (!parsed.ok) {
+                        // Clamp to 1MB window near EOF instead of 416 (prevents client stalls during seeking)
+                        const clampWindowBytes = 1024 * 1024;
+                        start = Math.max(0, fileSize - clampWindowBytes);
+                        end = fileSize - 1;
                         logger.debug(
-                            `    Range start ${start} >= file size ${fileSize}, clamping to EOF`
+                            `    Invalid range, clamping to last ${fileSize - start} bytes`
                         );
-                        // Browsers can occasionally request a range start beyond EOF during media seeking.
-                        // Returning 416 can cause some clients to stall; instead clamp to a small window near EOF and serve 206.
-                        // NOTE: Serving only the last byte is not a valid decodable audio chunk for many formats/clients.
-                        const clampWindowBytes = 1024 * 1024; // 1MB window near EOF
-                        const clampedStart = Math.max(
-                            0,
-                            fileSize - clampWindowBytes
-                        );
-                        res.writeHead(206, {
-                            "Content-Range": `bytes ${clampedStart}-${
-                                fileSize - 1
-                            }/${fileSize}`,
-                            "Accept-Ranges": "bytes",
-                            "Content-Length": fileSize - clampedStart,
-                            "Content-Type": episode.mimeType || "audio/mpeg",
-                            "Cache-Control": "public, max-age=3600",
-                            "Access-Control-Allow-Origin":
-                                req.headers.origin || "*",
-                            "Access-Control-Allow-Credentials": "true",
-                        });
-                        const fileStream = fs.createReadStream(cachedPath, {
-                            start: clampedStart,
-                            end: fileSize - 1,
-                        });
-                        // Clean up file stream when client disconnects
-                        res.on("close", () => {
-                            if (!fileStream.destroyed) {
-                                fileStream.destroy();
-                            }
-                        });
-                        fileStream.pipe(res);
-                        fileStream.on("error", (err) => {
-                            logger.error("    Cache stream error:", err);
-                            if (!res.headersSent) {
-                                res.status(500).json({
-                                    error: "Failed to stream episode",
-                                });
-                            } else {
-                                res.end();
-                            }
-                        });
-                        return; // Exit after starting clamped cache stream
+                    } else {
+                        start = parsed.start;
+                        end = parsed.end;
                     }
 
-                    const validEnd = Math.min(end, fileSize - 1);
-                    const chunkSize = validEnd - start + 1;
+                    const chunkSize = end - start + 1;
 
                     logger.debug(
-                        `    Serving range: bytes ${start}-${validEnd}/${fileSize}`
+                        `    Serving range: bytes ${start}-${end}/${fileSize}`
                     );
 
                     res.writeHead(206, {
-                        "Content-Range": `bytes ${start}-${validEnd}/${fileSize}`,
+                        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
                         "Accept-Ranges": "bytes",
                         "Content-Length": chunkSize,
                         "Content-Type": episode.mimeType || "audio/mpeg",
@@ -977,7 +940,7 @@ router.get("/:podcastId/episodes/:episodeId/stream", async (req, res) => {
 
                     const fileStream = fs.createReadStream(cachedPath, {
                         start,
-                        end: validEnd,
+                        end: end,
                     });
                     // Clean up file stream when client disconnects
                     res.on("close", () => {
@@ -1067,10 +1030,15 @@ router.get("/:podcastId/episodes/:episodeId/stream", async (req, res) => {
         }
 
         if (range && fileSize) {
-            // Parse range header (format: bytes=start-end)
-            const parts = range.replace(/bytes=/, "").split("-");
-            const start = parseInt(parts[0], 10);
-            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const parsed = parseRangeHeader(range, fileSize);
+            if (!parsed.ok) {
+                res.status(416).set({
+                    "Content-Range": `bytes */${fileSize}`,
+                });
+                res.end();
+                return;
+            }
+            const { start, end } = parsed;
             const chunkSize = end - start + 1;
 
             logger.debug(

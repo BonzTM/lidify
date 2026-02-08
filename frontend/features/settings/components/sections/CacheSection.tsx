@@ -688,6 +688,7 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
                                                 completed={enrichmentProgress.clapEmbeddings.completed}
                                                 total={enrichmentProgress.clapEmbeddings.total}
                                                 progress={enrichmentProgress.clapEmbeddings.progress}
+                                                processing={enrichmentProgress.clapEmbeddings.processing}
                                                 failed={enrichmentProgress.clapEmbeddings.failed}
                                                 isBackground={true}
                                             />
@@ -1036,7 +1037,7 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
                             <input
                                 type="range"
                                 min={1}
-                                max={4}
+                                max={8}
                                 value={clapWorkersConfig?.workers ?? 2}
                                 disabled={isClapWorkersLoading}
                                 onChange={(e) => {

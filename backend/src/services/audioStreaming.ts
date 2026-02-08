@@ -9,6 +9,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "@ffmpeg-installer/ffmpeg";
 import PQueue from "p-queue";
 import { AppError, ErrorCode, ErrorCategory } from "../utils/errors";
+import { parseRangeHeader } from "../utils/rangeParser";
 import { parseFile } from "music-metadata";
 
 // Set FFmpeg path to bundled binary
@@ -408,19 +409,16 @@ export class AudioStreamingService {
             let end = fileSize - 1;
 
             if (range) {
-                // Parse bytes=START-END or bytes=START-
-                const parts = range.replace(/bytes=/, "").split("-");
-                start = parseInt(parts[0], 10);
-                end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-                // Validate range
-                if (start >= fileSize || end >= fileSize || start > end) {
+                const parsed = parseRangeHeader(range, fileSize);
+                if (!parsed.ok) {
                     res.status(416).set({
                         "Content-Range": `bytes */${fileSize}`,
                     });
                     res.end();
                     return;
                 }
+                start = parsed.start;
+                end = parsed.end;
             }
 
             const contentLength = end - start + 1;

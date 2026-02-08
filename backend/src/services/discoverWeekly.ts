@@ -12,6 +12,7 @@
  */
 
 import { logger } from "../utils/logger";
+import { normalizeArtistName } from "../utils/artistNormalization";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
 import axios from "axios";
@@ -1000,7 +1001,7 @@ export class DiscoverWeeklyService {
                     album: {
                         artist: {
                             OR: [
-                                { name: { in: seedArtistNames } },
+                                { normalizedName: { in: seedArtistNames.map(n => normalizeArtistName(n)) } },
                                 ...(seedArtistMbids.length > 0
                                     ? [{ mbid: { in: seedArtistMbids } }]
                                     : []),

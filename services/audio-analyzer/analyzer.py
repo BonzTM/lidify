@@ -52,18 +52,16 @@ It connects to Redis for job queue and PostgreSQL for storing results.
 """
 
 # NOW safe to import other dependencies
-import argparse
-import asyncio
 import json
 import time
 import logging
+import gc
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 import traceback
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
-import gc
 
 # BrokenProcessPool was added in Python 3.9, provide compatibility for Python 3.8
 try:
@@ -108,35 +106,13 @@ except ImportError as e:
     logger.warning(f"Essentia not available: {e}")
 
 # TensorFlow models via Essentia
+# NOTE: TF is NOT imported in the main process to save ~300MB RAM.
+# Worker processes import TF independently via spawn mode.
+# TF_MODELS_AVAILABLE is set after MODELS dict is defined below.
 TF_MODELS_AVAILABLE = False
-TF_GPU_AVAILABLE = False
+TF_GPU_AVAILABLE = False  # Detected in worker processes
 TF_GPU_NAME = None
-TensorflowPredictMusiCNN = None
-try:
-    import tensorflow as tf
-
-    # Detect and configure GPU
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        TF_GPU_AVAILABLE = True
-        TF_GPU_NAME = gpus[0].name
-        # Enable memory growth to prevent TF from allocating all GPU memory
-        for gpu in gpus:
-            try:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            except RuntimeError:
-                pass
-        logger.info(f"TensorFlow GPU detected: {TF_GPU_NAME}")
-    else:
-        logger.info("TensorFlow running on CPU")
-
-    from essentia.standard import TensorflowPredictMusiCNN
-    TF_MODELS_AVAILABLE = True
-    device_str = f"GPU: {TF_GPU_NAME}" if TF_GPU_AVAILABLE else "CPU"
-    logger.info(f"TensorflowPredictMusiCNN available - Enhanced mode enabled ({device_str})")
-except ImportError as e:
-    logger.warning(f"TensorflowPredictMusiCNN not available: {e}")
-    logger.info("Falling back to Standard mode")
+TensorflowPredictMusiCNN = None  # Loaded in worker processes
 
 # Configuration from environment
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
@@ -145,14 +121,60 @@ MUSIC_PATH = os.getenv('MUSIC_PATH', '/music')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '10'))
 SLEEP_INTERVAL = int(os.getenv('SLEEP_INTERVAL', '5'))
 
-# Auto-scaling workers: use 50% of CPU cores, min 2, max 8
-# Can be overridden with NUM_WORKERS environment variable
-def _get_auto_workers() -> int:
-    """Calculate optimal worker count based on CPU cores"""
-    cpu_count = os.cpu_count() or 4
-    auto_workers = max(2, min(8, cpu_count // 2))
-    return auto_workers
+# BRPOP timeout: how long to block waiting for work (seconds)
+# Also serves as the DB reconciliation interval
+# Uses SLEEP_INTERVAL for backward compatibility, minimum 5s
+BRPOP_TIMEOUT = max(5, int(os.getenv('BRPOP_TIMEOUT', str(SLEEP_INTERVAL))))
 
+# Idle timeout before unloading ML models from memory (seconds)
+# Models are reloaded automatically when new work arrives
+MODEL_IDLE_TIMEOUT = int(os.getenv('MODEL_IDLE_TIMEOUT', '300'))
+
+# Debounce delay for worker resize (seconds) -- prevents pool churn when user drags a slider
+RESIZE_DEBOUNCE_SECONDS = 5
+
+
+class DatabaseConnection:
+    """PostgreSQL connection manager"""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.conn = None
+
+    def connect(self):
+        """Establish database connection with explicit UTF-8 encoding"""
+        if not self.url:
+            raise ValueError("DATABASE_URL not set")
+
+        self.conn = psycopg2.connect(
+            self.url,
+            options="-c client_encoding=UTF8"
+        )
+        self.conn.set_client_encoding('UTF8')
+        self.conn.autocommit = False
+        logger.info("Connected to PostgreSQL with UTF-8 encoding")
+
+    def get_cursor(self):
+        """Get a database cursor"""
+        if not self.conn:
+            self.connect()
+        return self.conn.cursor(cursor_factory=RealDictCursor)
+
+    def commit(self):
+        """Commit transaction"""
+        if self.conn:
+            self.conn.commit()
+
+    def rollback(self):
+        """Rollback transaction"""
+        if self.conn:
+            self.conn.rollback()
+
+    def close(self):
+        """Close connection"""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
 
 
 def _get_workers_from_db() -> int:
@@ -203,7 +225,6 @@ STALE_PROCESSING_MINUTES = int(os.getenv('STALE_PROCESSING_MINUTES', '15'))  # R
 
 # Queue names
 ANALYSIS_QUEUE = 'audio:analysis:queue'
-ANALYSIS_PROCESSING = 'audio:analysis:processing'
 
 # Control channel for enrichment coordination
 CONTROL_CHANNEL = 'audio:analysis:control'
@@ -230,49 +251,12 @@ MODELS = {
     'voice_instrumental': os.path.join(MODEL_DIR, 'voice_instrumental-msd-musicnn-1.pb'),
 }
 
-class DatabaseConnection:
-    """PostgreSQL connection manager"""
-    
-    def __init__(self, url: str):
-        self.url = url
-        self.conn = None
-    
-    def connect(self):
-        """Establish database connection with explicit UTF-8 encoding"""
-        if not self.url:
-            raise ValueError("DATABASE_URL not set")
-        
-        # Ensure UTF-8 encoding for international file paths (Issue #6 fix)
-        self.conn = psycopg2.connect(
-            self.url,
-            options="-c client_encoding=UTF8"
-        )
-        self.conn.set_client_encoding('UTF8')
-        self.conn.autocommit = False
-        logger.info("Connected to PostgreSQL with UTF-8 encoding")
-    
-    def get_cursor(self):
-        """Get a database cursor"""
-        if not self.conn:
-            self.connect()
-        return self.conn.cursor(cursor_factory=RealDictCursor)
-    
-    def commit(self):
-        """Commit transaction"""
-        if self.conn:
-            self.conn.commit()
-    
-    def rollback(self):
-        """Rollback transaction"""
-        if self.conn:
-            self.conn.rollback()
-    
-    def close(self):
-        """Close connection"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
-
+# Now that MODELS is defined, check if model files exist on disk
+TF_MODELS_AVAILABLE = os.path.exists(MODELS['musicnn'])
+if TF_MODELS_AVAILABLE:
+    logger.info(f"MusiCNN model files found at {MODEL_DIR}")
+else:
+    logger.info(f"MusiCNN model files not found at {MODEL_DIR} - Standard mode only")
 
 class AudioAnalyzer:
     """
@@ -284,7 +268,6 @@ class AudioAnalyzer:
     """
     
     def __init__(self):
-        self.loaders = {}
         self.enhanced_mode = False
         self.musicnn_model = None  # Base MusiCNN model
         self.prediction_models = {}  # Classification head models
@@ -309,27 +292,42 @@ class AudioAnalyzer:
         self.rms = es.RMS()  # For proper energy calculation
         self.spectrum = es.Spectrum()
         self.windowing = es.Windowing(type='hann')
-        
+        self.resampler = es.Resample(inputSampleRate=44100, outputSampleRate=16000)
+
         logger.info("Essentia basic algorithms initialized")
     
     def _load_ml_models(self):
         """
         Load MusiCNN TensorFlow models for Enhanced mode.
-        
+
         Architecture:
         1. Base MusiCNN model generates embeddings from audio
         2. Classification head models take embeddings and output predictions
-        
+
         If models are missing, gracefully fall back to Standard mode.
         """
         if not TF_MODELS_AVAILABLE:
-            logger.info("TensorFlow not available - using Standard mode")
+            logger.info("Model files not available - using Standard mode")
             return
-        
+
         try:
-            from essentia.standard import TensorflowPredict2D
+            import tensorflow as tf
+
+            # Detect and configure GPU (runs in worker processes only)
+            gpus = tf.config.experimental.list_physical_devices('GPU')
+            if gpus:
+                for gpu in gpus:
+                    try:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    except RuntimeError:
+                        pass
+                logger.info(f"TensorFlow GPU detected: {gpus[0].name}")
+            else:
+                logger.info("TensorFlow running on CPU")
+
+            from essentia.standard import TensorflowPredict2D, TensorflowPredictMusiCNN
             logger.info("Loading MusiCNN models...")
-            
+
             # First, load the base MusiCNN embedding model
             if os.path.exists(MODELS['musicnn']):
                 try:
@@ -396,116 +394,71 @@ class AudioAnalyzer:
             traceback.print_exc()
             self.enhanced_mode = False
     
-    def load_audio(self, file_path: str, sample_rate: int = 16000, max_duration: int = 90) -> Optional[Any]:
-        """Load up to max_duration seconds of audio as mono signal (to limit memory usage)"""
+    def load_audio(self, file_path: str, max_duration: int = 90) -> Optional[Any]:
+        """Load up to max_duration seconds of audio at 44.1kHz as mono signal"""
         if not ESSENTIA_AVAILABLE:
             return None
-        
+
         try:
-            loader = es.MonoLoader(filename=file_path, sampleRate=sample_rate)
+            loader = es.MonoLoader(filename=file_path, sampleRate=44100)
             audio = loader()
-            # Limit to max_duration seconds
-            max_samples = int(sample_rate * max_duration)
+            max_samples = int(44100 * max_duration)
             if len(audio) > max_samples:
                 audio = audio[:max_samples]
             return audio
         except Exception as e:
             logger.error(f"Failed to load audio {file_path}: {e}")
             return None
-    
+
     def validate_audio(self, audio, file_path: str) -> Tuple[bool, Optional[str]]:
         """
         Validate audio before analysis to detect edge cases that cause crashes.
-        
+
         Returns:
             (is_valid, error_message) - error_message is None if valid
-        
-        Checks:
-        1. Duration >= 5 seconds (very short files cause rhythm extraction issues)
-        2. Not mostly silence (>80% silence = likely corrupted or blank file)
-        3. Basic signal statistics (detect NaN/Inf corruption)
         """
         try:
-            # Check 1: Minimum duration
-            sample_rate = 44100  # Assumed sample rate for validation
-            duration = len(audio) / sample_rate
-            
+            duration = len(audio) / 44100
+
             if duration < 5.0:
                 return (False, f"Audio too short: {duration:.1f}s (minimum 5s)")
-            
-            # Check 2: Signal statistics (detect corruption)
+
             if len(audio) == 0:
                 return (False, "Audio is empty")
-            
-            # Check for NaN or Inf values
+
             if np.any(np.isnan(audio)) or np.any(np.isinf(audio)):
                 return (False, "Audio contains NaN or Inf values (corrupted)")
-            
-            # Check 3: Silence detection
-            # Calculate RMS energy across the entire audio
+
+            # Silence detection using vectorized RMS over chunks
             try:
-                rms = es.RMS()
                 frame_size = 2048
                 hop_size = 1024
-                silent_frames = 0
-                total_frames = 0
-                
-                # Silence threshold: RMS < 0.001 (very quiet)
-                silence_threshold = 0.001
-                
-                for i in range(0, len(audio) - frame_size, hop_size):
-                    frame = audio[i:i + frame_size]
-                    frame_rms = rms(frame)
-                    total_frames += 1
-                    if frame_rms < silence_threshold:
-                        silent_frames += 1
-                
-                if total_frames > 0:
-                    silence_ratio = silent_frames / total_frames
-                    if silence_ratio > 0.8:
-                        return (False, f"Audio is {silence_ratio*100:.0f}% silence (likely corrupted or blank)")
-            
+                n_frames = max(1, (len(audio) - frame_size) // hop_size)
+                # Vectorized: compute RMS per frame using stride tricks
+                silent_count = 0
+                for i in range(0, min(n_frames * hop_size, len(audio) - frame_size), hop_size):
+                    rms_val = self.rms(audio[i:i + frame_size])
+                    if rms_val < 0.001:
+                        silent_count += 1
+
+                if n_frames > 0 and silent_count / n_frames > 0.8:
+                    ratio = silent_count / n_frames * 100
+                    return (False, f"Audio is {ratio:.0f}% silence (likely corrupted or blank)")
             except Exception as silence_error:
-                # Silence check failed - log but don't fail validation
                 logger.warning(f"Silence detection failed for {file_path}: {silence_error}")
-            
-            # All checks passed
+
             return (True, None)
-            
+
         except Exception as e:
             logger.warning(f"Audio validation error for {file_path}: {e}")
-            # On validation error, allow analysis to proceed (fail-open)
             return (True, None)
     
     def analyze(self, file_path: str) -> Dict[str, Any]:
         """
         Analyze audio file and extract all features.
-        
+
+        Loads audio once at 44.1kHz, resamples in-memory to 16kHz for ML inference.
         Uses Enhanced mode (ML models) if available, otherwise Standard mode (heuristics).
-        
-        Returns dict with:
-        - bpm: float
-        - beatsCount: int
-        - key: str
-        - keyScale: str
-        - keyStrength: float
-        - energy: float
-        - loudness: float
-        - dynamicRange: float
-        - danceability: float
-        - valence: float (ML-predicted in Enhanced mode)
-        - arousal: float (ML-predicted in Enhanced mode)
-        - instrumentalness: float (ML-predicted in Enhanced mode)
-        - acousticness: float
-        - speechiness: float
-        - moodTags: list[str]
-        - essentiaGenres: list[str]
-        - moodHappy: float (Enhanced mode only)
-        - moodSad: float (Enhanced mode only)
-        - moodRelaxed: float (Enhanced mode only)
-        - moodAggressive: float (Enhanced mode only)
-        - danceabilityMl: float (Enhanced mode only)
-        - analysisMode: str ('enhanced' or 'standard')
         """
         result = {
             'bpm': None,
@@ -523,136 +476,131 @@ class AudioAnalyzer:
             'acousticness': None,
             'speechiness': None,
             'moodTags': [],
-            'essentiaGenres': [],
-            # Enhanced mode fields
             'moodHappy': None,
             'moodSad': None,
             'moodRelaxed': None,
             'moodAggressive': None,
+            'moodParty': None,
+            'moodAcoustic': None,
+            'moodElectronic': None,
             'danceabilityMl': None,
+            'essentiaGenres': [],
             'analysisMode': 'standard',
         }
-        
+
         if not ESSENTIA_AVAILABLE:
             logger.error("Essentia not available - cannot analyze audio files")
             result['_error'] = 'Essentia library not installed'
             return result
-        
-        # Limit memory: only analyze up to MAX_ANALYZE_SECONDS (default 90s)
+
         MAX_ANALYZE_SECONDS = int(os.getenv('MAX_ANALYZE_SECONDS', '90'))
+        audio_44k = None
         try:
-            # Load audio at different sample rates for different algorithms, limit duration
-            audio_44k = self.load_audio(file_path, 44100, max_duration=MAX_ANALYZE_SECONDS)
-            audio_16k = self.load_audio(file_path, 16000, max_duration=MAX_ANALYZE_SECONDS)
+            audio_44k = self.load_audio(file_path, max_duration=MAX_ANALYZE_SECONDS)
         except MemoryError:
             logger.error(f"MemoryError: Could not load audio for {file_path}")
             result['_error'] = 'MemoryError: audio file too large'
             return result
-        if audio_44k is None or audio_16k is None:
+        if audio_44k is None:
             return result
-        
-        # Validate audio before analysis (Phase 2 defensive improvement)
+
+        # Validate audio before analysis
         is_valid, validation_error = self.validate_audio(audio_44k, file_path)
         if not is_valid:
             logger.warning(f"Audio validation failed for {file_path}: {validation_error}")
             result['_error'] = validation_error
             return result
-        
+
         try:
             # === BASIC FEATURES (always extracted) ===
-            
-            # Rhythm Analysis with defensive error handling (Issue #13 fix)
+
+            # Rhythm Analysis with fallback chain
             try:
                 bpm, beats, beats_confidence, _, beats_intervals = self.rhythm_extractor(audio_44k)
                 result['bpm'] = round(float(bpm), 1)
                 result['beatsCount'] = len(beats)
             except Exception as rhythm_error:
-                # RhythmExtractor2013 can crash on edge cases (silence, corruption, very short files)
-                logger.warning(f"RhythmExtractor2013 failed, using fallback BPM estimation: {rhythm_error}")
-                
-                # Fallback: Simple onset-based BPM estimation
+                logger.warning(f"RhythmExtractor2013 failed, using fallback: {rhythm_error}")
                 try:
-                    # Use OnsetRate to estimate tempo from percussive onsets
                     onset_detector = es.OnsetRate()
                     onset_rate, _ = onset_detector(audio_44k)
-                    # OnsetRate returns onsets/second, convert to BPM estimate
-                    # Typical: 1-3 onsets/sec = 60-180 BPM
                     bpm = max(60, min(180, onset_rate * 60))
                     result['bpm'] = round(float(bpm), 1)
-                    result['beatsCount'] = 0  # Can't reliably count beats without RhythmExtractor
-                    logger.info(f"Fallback BPM estimate: {result['bpm']} (from onset rate: {onset_rate:.2f}/sec)")
+                    result['beatsCount'] = 0
+                    logger.info(f"Fallback BPM estimate: {result['bpm']}")
                 except Exception as fallback_error:
-                    # Even fallback failed - use neutral default
                     logger.warning(f"Onset-based fallback also failed: {fallback_error}")
-                    bpm = 120.0  # Neutral default tempo
+                    bpm = 120.0
                     result['bpm'] = 120.0
                     result['beatsCount'] = 0
-                    logger.info("Using default BPM: 120.0")
-            
-            # Key Detection with defensive error handling
+
+            # Key Detection
             try:
                 key, scale, strength = self.key_extractor(audio_44k)
                 result['key'] = key
                 result['keyScale'] = scale
                 result['keyStrength'] = round(float(strength), 3)
             except Exception as key_error:
-                # Key extraction can fail on edge cases, use defaults
                 logger.warning(f"Key extraction failed: {key_error}")
                 key = 'C'
                 scale = 'major'
-                strength = 0.0
                 result['key'] = key
                 result['keyScale'] = scale
                 result['keyStrength'] = 0.0
-                logger.info("Using default key: C major")
-            
-            # Energy & Dynamics - using RMS for proper 0-1 energy
-            rms_values = []
-            zcr_values = []
-            spectral_centroid_values = []
-            spectral_flatness_values = []
-            
-            # Process audio in frames for detailed analysis
+
+            # Energy & Spectral features - frame-based extraction
             frame_size = 2048
             hop_size = 1024
-            max_frames = int((44100 * MAX_ANALYZE_SECONDS - frame_size) / hop_size)
-            for idx, i in enumerate(range(0, len(audio_44k) - frame_size, hop_size)):
-                if idx > max_frames:
-                    break
-                frame = audio_44k[i:i + frame_size]
+            n_frames = max(0, (len(audio_44k) - frame_size) // hop_size)
+
+            rms_values = np.empty(n_frames, dtype=np.float32)
+            zcr_values = np.empty(n_frames, dtype=np.float32)
+            sc_values = np.empty(n_frames, dtype=np.float32)
+            sf_values = np.empty(n_frames, dtype=np.float32)
+
+            for idx in range(n_frames):
+                offset = idx * hop_size
+                frame = audio_44k[offset:offset + frame_size]
                 windowed = self.windowing(frame)
                 spectrum = self.spectrum(windowed)
-                
-                rms_values.append(self.rms(frame))
-                zcr_values.append(self.zcr(frame))
-                spectral_centroid_values.append(self.spectral_centroid(spectrum))
-                spectral_flatness_values.append(self.spectral_flatness(spectrum))
-            
-            # RMS-based energy (properly normalized to 0-1)
-            if rms_values:
-                avg_rms = np.mean(rms_values)
-                result['energy'] = round(min(1.0, float(avg_rms) * 3), 3)
+
+                rms_values[idx] = self.rms(frame)
+                zcr_values[idx] = self.zcr(frame)
+                sc_values[idx] = self.spectral_centroid(spectrum)
+                sf_values[idx] = self.spectral_flatness(spectrum)
+
+            if n_frames > 0:
+                avg_rms = float(np.mean(rms_values))
+                result['energy'] = round(min(1.0, avg_rms * 3), 3)
+                avg_sc = float(np.mean(sc_values))
+                avg_sf = float(np.mean(sf_values))
+                avg_zcr = float(np.mean(zcr_values))
             else:
                 result['energy'] = 0.5
-            
+                avg_sc = 0.5
+                avg_sf = -20.0
+                avg_zcr = 0.1
+
             loudness = self.loudness(audio_44k)
             result['loudness'] = round(float(loudness), 2)
-            
+
             dynamic_range, _ = self.dynamic_complexity(audio_44k)
             result['dynamicRange'] = round(float(dynamic_range), 2)
-            
+
             # Store spectral features for Standard mode estimates
-            result['_spectral_centroid'] = np.mean(spectral_centroid_values) if spectral_centroid_values else 0.5
-            result['_spectral_flatness'] = np.mean(spectral_flatness_values) if spectral_flatness_values else -20
-            result['_zcr'] = np.mean(zcr_values) if zcr_values else 0.1
-            
+            result['_spectral_centroid'] = avg_sc
+            result['_spectral_flatness'] = avg_sf
+            result['_zcr'] = avg_zcr
+
             # Basic Danceability (non-ML)
             danceability, _ = self.danceability_extractor(audio_44k)
             result['danceability'] = round(max(0.0, min(1.0, float(danceability))), 3)
-            
+
             # === ENHANCED MODE: Use ML models ===
             if self.enhanced_mode:
                 try:
+                    # Resample in-memory instead of re-reading from disk
+                    audio_16k = self.resampler(audio_44k)
                     ml_features = self._extract_ml_features(audio_16k)
                     result.update(ml_features)
                     result['analysisMode'] = 'enhanced'
@@ -663,10 +611,10 @@ class AudioAnalyzer:
                     self._apply_standard_estimates(result, scale, bpm)
             else:
                 self._apply_standard_estimates(result, scale, bpm)
-            
+
             # Generate mood tags based on all features
             result['moodTags'] = self._generate_mood_tags(result)
-            
+
             logger.info(f"Analysis complete [{result['analysisMode']}]: BPM={result['bpm']}, Key={result['key']} {result['keyScale']}, Valence={result['valence']}, Arousal={result['arousal']}")
         except MemoryError:
             logger.error(f"MemoryError during analysis of {file_path}")
@@ -675,12 +623,8 @@ class AudioAnalyzer:
             logger.error(f"Analysis error: {e}")
             traceback.print_exc()
         finally:
-            # Clean up internal fields before returning
-            for key in ['_spectral_centroid', '_spectral_flatness', '_zcr']:
-                result.pop(key, None)
-            # Explicitly free memory
-            del audio_44k, audio_16k
-            gc.collect()
+            for k in ['_spectral_centroid', '_spectral_flatness', '_zcr']:
+                result.pop(k, None)
         return result
     
     def _extract_ml_features(self, audio_16k) -> Dict[str, Any]:
@@ -772,31 +716,25 @@ class AudioAnalyzer:
         # === DETECT UNRELIABLE PREDICTIONS ===
         # MusiCNN was trained on pop/rock (MSD). For classical/piano/ambient music,
         # the model often outputs high values for ALL contradictory moods.
-        # Detect this and normalize to preserve relative ordering.
-        core_moods = ['moodHappy', 'moodSad', 'moodRelaxed', 'moodAggressive']
-        core_values = [raw_moods[m][0] for m in core_moods if m in raw_moods]
-        
-        if len(core_values) >= 4:
-            min_mood = min(core_values)
-            max_mood = max(core_values)
-            
-            # If all core moods are > 0.7 AND the range is small,
-            # the predictions are likely unreliable (out-of-distribution audio)
+        # Detect this and normalize ALL moods to preserve relative ordering.
+        all_mood_keys = list(raw_moods.keys())
+        all_mood_values = [raw_moods[m][0] for m in all_mood_keys]
+
+        if len(all_mood_values) >= 4:
+            min_mood = min(all_mood_values)
+            max_mood = max(all_mood_values)
+
             if min_mood > 0.7 and (max_mood - min_mood) < 0.3:
                 logger.warning(f"Detected out-of-distribution audio: all moods high ({min_mood:.2f}-{max_mood:.2f}). Normalizing...")
-                
-                # Normalize: scale so max becomes 0.8 and min becomes 0.2
-                # This preserves relative ordering while creating useful differentiation
-                for mood_key in core_moods:
-                    if mood_key in raw_moods:
-                        old_val = raw_moods[mood_key][0]
-                        if max_mood > min_mood:
-                            # Linear scaling: min->0.2, max->0.8
-                            normalized = 0.2 + (old_val - min_mood) / (max_mood - min_mood) * 0.6
-                        else:
-                            normalized = 0.5  # All values equal, use neutral
-                        raw_moods[mood_key] = (round(normalized, 3), raw_moods[mood_key][1])
-                
+
+                for mood_key in all_mood_keys:
+                    old_val = raw_moods[mood_key][0]
+                    if max_mood > min_mood:
+                        normalized = 0.2 + (old_val - min_mood) / (max_mood - min_mood) * 0.6
+                    else:
+                        normalized = 0.5
+                    raw_moods[mood_key] = (round(normalized, 3), raw_moods[mood_key][1])
+
                 logger.info(f"Normalized moods: H={raw_moods.get('moodHappy', (0,0))[0]}, S={raw_moods.get('moodSad', (0,0))[0]}, R={raw_moods.get('moodRelaxed', (0,0))[0]}, A={raw_moods.get('moodAggressive', (0,0))[0]}")
         
         # Store final mood values in result
@@ -818,20 +756,22 @@ class AudioAnalyzer:
         electronic = result.get('moodElectronic', 0.5)
         result['arousal'] = round(max(0.0, min(1.0, aggressive * 0.35 + party * 0.25 + electronic * 0.2 + (1 - relaxed) * 0.1 + (1 - acoustic) * 0.1)), 3)
         
-        # === INSTRUMENTALNESS (voice/instrumental) ===
+        # === INSTRUMENTALNESS & SPEECHINESS (voice/instrumental) ===
         if 'voice_instrumental' in self.prediction_models:
             val, var = safe_predict(self.prediction_models['voice_instrumental'], embeddings, 'voice_instrumental')
             result['instrumentalness'] = val
-        
+            # Derive speechiness: inverse of instrumentalness, scaled down
+            result['speechiness'] = round(max(0.0, min(1.0, (1.0 - val) * 0.6)), 3)
+
         # === ACOUSTICNESS (from mood_acoustic model) ===
         if 'moodAcoustic' in result:
             result['acousticness'] = result['moodAcoustic']
-        
+
         # === ML DANCEABILITY ===
         if 'danceability' in self.prediction_models:
             val, var = safe_predict(self.prediction_models['danceability'], embeddings, 'danceability')
             result['danceabilityMl'] = val
-        
+
         return result
     
     def _apply_standard_estimates(self, result: Dict[str, Any], scale: str, bpm: float):
@@ -938,10 +878,6 @@ class AudioAnalyzer:
             result['speechiness'] = round(min(0.5, zcr * 3), 3)
         else:
             result['speechiness'] = 0.1
-        
-        # Clean up internal fields (don't store in DB)
-        for key in ['_spectral_centroid', '_spectral_flatness', '_zcr']:
-            result.pop(key, None)
     
     def _generate_mood_tags(self, features: Dict[str, Any]) -> List[str]:
         """
@@ -1028,6 +964,10 @@ class AudioAnalyzer:
 # Global analyzer instance for worker processes (initialized per-process)
 _process_analyzer = None
 
+def _pool_health_check():
+    """No-op function for pool health checks (lambdas can't be pickled with spawn mode)."""
+    return True
+
 def _init_worker_process():
     """
     Initialize the analyzer for a worker process.
@@ -1097,9 +1037,11 @@ class AnalysisWorker:
         self.executor = None
         self.pool_active = False
         self.consecutive_empty = 0
-        self._tracks_since_refresh = 0  # Track count for periodic pool refresh
         self.is_paused = False  # Enrichment control: pause state
         self.pubsub = None  # Redis pub/sub for control signals
+        self._last_work_time = time.time()
+        self._pending_resize: int | None = None
+        self._pending_resize_time: float = 0.0
         self._setup_control_channel()
     
     def _setup_control_channel(self):
@@ -1128,7 +1070,10 @@ class AnalysisWorker:
                     if isinstance(cmd, dict) and cmd.get('command') == 'set_workers':
                         new_count = int(cmd.get('count', NUM_WORKERS))
                         new_count = max(1, min(8, new_count))
-                        self._resize_worker_pool(new_count)
+                        if new_count != NUM_WORKERS:
+                            self._pending_resize = new_count
+                            self._pending_resize_time = time.time()
+                            logger.info(f"Worker resize queued: {NUM_WORKERS} -> {new_count} (applying in {RESIZE_DEBOUNCE_SECONDS}s)")
                         return
                 except (json.JSONDecodeError, ValueError):
                     pass  # Not JSON, try as plain string
@@ -1148,6 +1093,17 @@ class AnalysisWorker:
         except Exception as e:
             logger.warning(f"Error checking control signals: {e}")
     
+    def _apply_pending_resize(self):
+        """Apply buffered resize if debounce period has elapsed."""
+        if self._pending_resize is None:
+            return
+        elapsed = time.time() - self._pending_resize_time
+        if elapsed < RESIZE_DEBOUNCE_SECONDS:
+            return
+        target = self._pending_resize
+        self._pending_resize = None
+        self._resize_worker_pool(target)
+
     def _resize_worker_pool(self, new_count: int):
         """
         Resize the worker pool to a new count.
@@ -1177,7 +1133,6 @@ class AnalysisWorker:
             except Exception as e:
                 logger.warning(f"Error shutting down old pool: {e}")
         
-        self._tracks_since_refresh = 0
         logger.info(f"Worker pool resized to {NUM_WORKERS} workers")
     
     def _check_pool_health(self) -> bool:
@@ -1194,7 +1149,7 @@ class AnalysisWorker:
         
         # Try a no-op submission to verify pool works
         try:
-            future = self.executor.submit(lambda: True)
+            future = self.executor.submit(_pool_health_check)
             result = future.result(timeout=5)
             return result is True
         except Exception:
@@ -1216,7 +1171,6 @@ class AnalysisWorker:
             initializer=_init_worker_process
         )
         self.pool_active = True
-        self._tracks_since_refresh = 0
         logger.info(f"Worker pool started ({NUM_WORKERS} workers)")
 
     def _shutdown_pool(self):
@@ -1230,6 +1184,13 @@ class AnalysisWorker:
             logger.warning(f"Error during pool shutdown: {e}")
         self.executor = None
         self.pool_active = False
+        gc.collect()
+        # Force glibc to return freed pages to OS (Python/PyTorch hold RSS otherwise)
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
         logger.info("Worker pool shut down (will restart when work arrives)")
 
     def _recreate_pool(self):
@@ -1376,78 +1337,134 @@ class AnalysisWorker:
         finally:
             cursor.close()
     
+    def _run_db_reconciliation(self) -> bool:
+        """
+        Check database for pending tracks that may have been missed by Redis queue.
+        Handles edge cases: manual DB edits, crash recovery, queue loss.
+        Marks tracks as 'processing' in DB first (prevents backend double-queuing),
+        then pushes them into the Redis queue so BRPOP picks them up.
+
+        Returns True if pending work was found, False if nothing to do.
+        """
+        cursor = self.db.get_cursor()
+        try:
+            cursor.execute("""
+                SELECT id, "filePath"
+                FROM "Track"
+                WHERE "analysisStatus" = 'pending'
+                AND COALESCE("analysisRetryCount", 0) < %s
+                ORDER BY "fileModified" DESC
+                LIMIT %s
+            """, (MAX_RETRIES, BATCH_SIZE))
+
+            tracks = cursor.fetchall()
+            if tracks:
+                logger.info(f"DB reconciliation found {len(tracks)} pending tracks, queuing...")
+                track_ids = [t['id'] for t in tracks]
+                cursor.execute("""
+                    UPDATE "Track"
+                    SET "analysisStatus" = 'processing',
+                        "analysisStartedAt" = NOW()
+                    WHERE id = ANY(%s)
+                """, (track_ids,))
+                self.db.commit()
+                pipe = self.redis.pipeline()
+                for t in tracks:
+                    pipe.rpush(ANALYSIS_QUEUE, json.dumps({
+                        'trackId': t['id'],
+                        'filePath': t['filePath']
+                    }))
+                pipe.execute()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"DB reconciliation failed: {e}")
+            self.db.rollback()
+            return False
+        finally:
+            cursor.close()
+
     def start(self):
-        """Start processing jobs with parallel workers"""
+        """Start processing jobs with BRPOP-driven event loop"""
         cpu_count = os.cpu_count() or 4
-        auto_workers = _get_auto_workers()
-        
+
         logger.info("=" * 60)
-        logger.info("Starting Audio Analysis Worker (PARALLEL MODE)")
+        logger.info("Starting Audio Analysis Worker (BRPOP MODE)")
         logger.info("=" * 60)
         logger.info(f"  Music path: {MUSIC_PATH}")
         logger.info(f"  Batch size: {BATCH_SIZE}")
-        logger.info(f"  CPU cores detected: {cpu_count}")
-        logger.info(f"  Auto-scaled workers: {auto_workers} (50% of cores, min 2, max 8)")
-        logger.info(f"  Active workers: {NUM_WORKERS}" + (" (from env)" if os.getenv('NUM_WORKERS') else " (default: 2)"))
+        logger.info(f"  CPU cores: {cpu_count}")
+        logger.info(f"  Worker processes: {NUM_WORKERS}")
+        logger.info(f"  BRPOP timeout: {BRPOP_TIMEOUT}s")
+        logger.info(f"  Model idle timeout: {MODEL_IDLE_TIMEOUT}s")
         logger.info(f"  Max retries per track: {MAX_RETRIES}")
         logger.info(f"  Stale processing timeout: {STALE_PROCESSING_MINUTES} minutes")
         logger.info(f"  Essentia available: {ESSENTIA_AVAILABLE}")
-        
+        logger.info(f"  ML models on disk: {TF_MODELS_AVAILABLE}")
+        logger.info(f"  Worker pool: LAZY (starts on first job)")
+
         self.db.connect()
         self.running = True
-        
-        # Cleanup stale processing tracks from previous crashes
+
         logger.info("Cleaning up stale processing tracks...")
         self._cleanup_stale_processing()
-        
-        # Retry failed tracks that haven't exceeded max retries
         logger.info("Checking for failed tracks to retry...")
         self._retry_failed_tracks()
-        
-        # Create process pool with initializer
-        # Each worker process loads its own TensorFlow models
-        self._ensure_pool()
-        
+
+        # Check for any already-queued work before entering BRPOP loop
+        self._run_db_reconciliation()
+
         try:
             while self.running:
-                # Publish heartbeat for feature detection
                 try:
-                    self.redis.set("audio:worker:heartbeat", str(int(time.time() * 1000)))
-                except Exception:
-                    pass  # Heartbeat is informational, don't crash on Redis failure
+                    # Publish heartbeat
+                    try:
+                        self.redis.set("audio:worker:heartbeat", str(int(time.time() * 1000)))
+                    except Exception:
+                        pass
 
-                try:
-                    # Check for control signals (pause/resume/stop)
+                    # Check for control signals (pause/resume/stop/set_workers)
                     self._check_control_signals()
-                    
-                    # If paused, sleep and continue checking for resume
+                    self._apply_pending_resize()
+
                     if self.is_paused:
                         logger.debug("Audio analysis paused, waiting for resume signal...")
                         time.sleep(1)
                         continue
-                    
-                    # Process work - health check removed as it was too aggressive
-                    # BrokenProcessPool exception handling below will catch real issues
-                    has_work = self.process_batch_parallel()
-                    
-                    if not has_work:
-                        self.consecutive_empty += 1
 
-                        # After N consecutive empty batches, shut down pool and do cleanup
+                    # BRPOP-driven: blocks until work arrives or timeout
+                    has_work = self.process_batch_parallel()
+
+                    if has_work:
+                        self.consecutive_empty = 0
+                        self._last_work_time = time.time()
+                    else:
+                        # BRPOP timed out -- run periodic maintenance
+                        self.consecutive_empty += 1
+                        found_work = self._run_db_reconciliation()
+
+                        # Unload models when idle: immediately if DB has no pending
+                        # work, or after MODEL_IDLE_TIMEOUT as a fallback
+                        if self.pool_active and not found_work:
+                            idle_seconds = time.time() - self._last_work_time
+                            if idle_seconds >= MODEL_IDLE_TIMEOUT:
+                                self._shutdown_pool()
+                                logger.info(f"Models idle for {idle_seconds:.0f}s, pool shut down")
+                            elif idle_seconds >= BRPOP_TIMEOUT:
+                                # No pending work in DB and queue empty -- unload now
+                                self._shutdown_pool()
+                                logger.info("All work complete, pool shut down (will restart when work arrives)")
+
+                        # Periodic cleanup every IDLE_SHUTDOWN_CYCLES timeouts
                         if self.consecutive_empty >= self.IDLE_SHUTDOWN_CYCLES:
-                            self._shutdown_pool()
-                            logger.info("Running cleanup and retry cycle...")
                             self._cleanup_stale_processing()
                             self._retry_failed_tracks()
                             self.consecutive_empty = 0
-                    else:
-                        self.consecutive_empty = 0
-                        
+
                 except KeyboardInterrupt:
                     logger.info("Shutdown requested")
                     self.running = False
                 except BrokenProcessPool:
-                    # Explicit handling for BrokenProcessPool (Issue #21)
                     logger.error("BrokenProcessPool detected, recreating pool...")
                     self._recreate_pool()
                     self._cleanup_stale_processing()
@@ -1456,8 +1473,7 @@ class AnalysisWorker:
                     logger.error(f"Worker error: {e}")
                     traceback.print_exc()
                     self.consecutive_empty += 1
-                    
-                    # On persistent errors, cleanup and reconnect
+
                     if self.consecutive_empty >= 5:
                         logger.info("Multiple consecutive errors, attempting recovery...")
                         try:
@@ -1466,14 +1482,13 @@ class AnalysisWorker:
                             self.db.connect()
                             self._cleanup_stale_processing()
                             self._retry_failed_tracks()
-                            # Also check if pool needs recreation
-                            if not self._check_pool_health():
+                            if self.pool_active and not self._check_pool_health():
                                 self._recreate_pool()
                         except Exception as reconnect_err:
                             logger.error(f"Recovery failed: {reconnect_err}")
                         self.consecutive_empty = 0
-                    
-                    time.sleep(SLEEP_INTERVAL)
+
+                    time.sleep(BRPOP_TIMEOUT)
         finally:
             self._shutdown_pool()
             if self.pubsub:
@@ -1484,52 +1499,31 @@ class AnalysisWorker:
     
     def process_batch_parallel(self) -> bool:
         """Process a batch of pending tracks in parallel.
-        
+
+        Uses BRPOP to wait for the first job (blocking, zero CPU),
+        then drains remaining queued jobs up to BATCH_SIZE.
+
         Returns:
-            True if there was work to process, False if queue was empty
+            True if there was work to process, False if BRPOP timed out
         """
-        # Check for queued jobs first
-        queued_jobs = []
+        result = self.redis.brpop(ANALYSIS_QUEUE, timeout=BRPOP_TIMEOUT)
+
+        if result is None:
+            return False
+
+        _, first_job_data = result
+        first_job = json.loads(first_job_data)
+        queued_jobs = [(first_job['trackId'], first_job.get('filePath', ''))]
+
         while len(queued_jobs) < BATCH_SIZE:
             job_data = self.redis.lpop(ANALYSIS_QUEUE)
             if not job_data:
                 break
             job = json.loads(job_data)
             queued_jobs.append((job['trackId'], job.get('filePath', '')))
-        
-        if queued_jobs:
-            self._process_tracks_parallel(queued_jobs)
-            return True
-        
-        # Otherwise, find pending tracks in database
-        cursor = self.db.get_cursor()
-        try:
-            cursor.execute("""
-                SELECT id, "filePath"
-                FROM "Track"
-                WHERE "analysisStatus" = 'pending'
-                ORDER BY "fileModified" DESC
-                LIMIT %s
-            """, (BATCH_SIZE,))
-            
-            tracks = cursor.fetchall()
-            
-            if not tracks:
-                # No pending tracks, sleep and retry
-                time.sleep(SLEEP_INTERVAL)
-                return False
-            
-            # Convert to list of tuples
-            track_list = [(t['id'], t['filePath']) for t in tracks]
-            self._process_tracks_parallel(track_list)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Batch processing error: {e}")
-            self.db.rollback()
-            return False
-        finally:
-            cursor.close()
+
+        self._process_tracks_parallel(queued_jobs)
+        return True
     
     def _process_tracks_parallel(self, tracks: List[Tuple[str, str]]):
         """Process multiple tracks in parallel using the process pool"""

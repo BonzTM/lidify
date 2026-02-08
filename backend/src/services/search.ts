@@ -2,6 +2,10 @@ import { prisma } from "../utils/db";
 import { logger } from "../utils/logger";
 import { redisClient } from "../utils/redis";
 
+export function normalizeCacheQuery(query: string): string {
+    return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 interface SearchOptions {
     query: string;
     limit?: number;
@@ -96,12 +100,47 @@ export class SearchService {
      * Example: "radio head" -> "radio:* & head:*"
      */
     private queryToTsquery(query: string): string {
-        return query
+        const terms = query
             .trim()
             .replace(/\s*&\s*/g, " and ")
             .split(/\s+/)
-            .map((term) => `${term.replace(/[^\w]/g, "")}:*`)
-            .join(" & ");
+            .map((term) => term.replace(/[^\w]/g, ""))
+            .filter((term) => term.length > 0);
+
+        if (terms.length === 0) return "";
+
+        return terms.map((term) => `${term}:*`).join(" & ");
+    }
+
+    private async searchArtistsFallback({
+        query,
+        limit = 20,
+        offset = 0,
+    }: SearchOptions): Promise<ArtistSearchResult[]> {
+        const results = await prisma.artist.findMany({
+            where: {
+                name: {
+                    contains: query,
+                    mode: "insensitive",
+                },
+                albums: {
+                    some: {},
+                },
+            },
+            select: {
+                id: true,
+                name: true,
+                mbid: true,
+                heroUrl: true,
+            },
+            take: limit,
+            skip: offset,
+            orderBy: {
+                name: "asc",
+            },
+        });
+
+        return results.map((r) => ({ ...r, rank: 0 }));
     }
 
     async searchArtists({
@@ -114,9 +153,11 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchArtistsFallback({ query, limit, offset });
+        }
 
         try {
-            // Single query with EXISTS to filter artists with albums
             const results = await prisma.$queryRaw<ArtistSearchResult[]>`
         SELECT
           a.id,
@@ -136,32 +177,62 @@ export class SearchService {
             return results;
         } catch (error) {
             logger.error("Artist search error:", error);
-            // Fallback to LIKE query if full-text search fails
-            const results = await prisma.artist.findMany({
-                where: {
-                    name: {
-                        contains: query,
-                        mode: "insensitive",
-                    },
-                    albums: {
-                        some: {},
-                    },
-                },
-                select: {
-                    id: true,
-                    name: true,
-                    mbid: true,
-                    heroUrl: true,
-                },
-                take: limit,
-                skip: offset,
-                orderBy: {
-                    name: "asc",
-                },
-            });
-
-            return results.map((r) => ({ ...r, rank: 0 }));
+            return this.searchArtistsFallback({ query, limit, offset });
         }
+    }
+
+    private async searchAlbumsFallback({
+        query,
+        limit = 20,
+        offset = 0,
+    }: SearchOptions): Promise<AlbumSearchResult[]> {
+        const results = await prisma.album.findMany({
+            where: {
+                OR: [
+                    {
+                        title: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        artist: {
+                            name: {
+                                contains: query,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                title: true,
+                artistId: true,
+                year: true,
+                coverUrl: true,
+                artist: {
+                    select: {
+                        name: true,
+                    },
+                },
+            },
+            take: limit,
+            skip: offset,
+            orderBy: {
+                title: "asc",
+            },
+        });
+
+        return results.map((r) => ({
+            id: r.id,
+            title: r.title,
+            artistId: r.artistId,
+            artistName: r.artist.name,
+            year: r.year,
+            coverUrl: r.coverUrl,
+            rank: 0,
+        }));
     }
 
     async searchAlbums({
@@ -174,15 +245,15 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchAlbumsFallback({ query, limit, offset });
+        }
 
         try {
-            // UNION approach for better index utilization
-            // Each branch can use its respective GIN index efficiently
             const results = await prisma.$queryRaw<AlbumSearchResult[]>`
         SELECT * FROM (
           SELECT DISTINCT ON (id) id, title, "artistId", "artistName", year, "coverUrl", rank
           FROM (
-            -- Albums matching by title (uses Album.searchVector GIN index)
             SELECT
               a.id,
               a.title,
@@ -197,7 +268,6 @@ export class SearchService {
 
             UNION ALL
 
-            -- Albums by matching artist (uses Artist.searchVector GIN index)
             SELECT
               a.id,
               a.title,
@@ -220,55 +290,56 @@ export class SearchService {
             return results;
         } catch (error) {
             logger.error("Album search error:", error);
-            // Fallback to LIKE query - search both album title and artist name
-            const results = await prisma.album.findMany({
-                where: {
-                    OR: [
-                        {
-                            title: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                        {
-                            artist: {
-                                name: {
-                                    contains: query,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    ],
+            return this.searchAlbumsFallback({ query, limit, offset });
+        }
+    }
+
+    private async searchTracksFallback({
+        query,
+        limit = 20,
+        offset = 0,
+    }: SearchOptions): Promise<TrackSearchResult[]> {
+        const results = await prisma.track.findMany({
+            where: {
+                title: {
+                    contains: query,
+                    mode: "insensitive",
                 },
-                select: {
-                    id: true,
-                    title: true,
-                    artistId: true,
-                    year: true,
-                    coverUrl: true,
-                    artist: {
-                        select: {
-                            name: true,
+            },
+            select: {
+                id: true,
+                title: true,
+                albumId: true,
+                duration: true,
+                album: {
+                    select: {
+                        title: true,
+                        artistId: true,
+                        artist: {
+                            select: {
+                                name: true,
+                            },
                         },
                     },
                 },
-                take: limit,
-                skip: offset,
-                orderBy: {
-                    title: "asc",
-                },
-            });
+            },
+            take: limit,
+            skip: offset,
+            orderBy: {
+                title: "asc",
+            },
+        });
 
-            return results.map((r) => ({
-                id: r.id,
-                title: r.title,
-                artistId: r.artistId,
-                artistName: r.artist.name,
-                year: r.year,
-                coverUrl: r.coverUrl,
-                rank: 0,
-            }));
-        }
+        return results.map((r) => ({
+            id: r.id,
+            title: r.title,
+            albumId: r.albumId,
+            albumTitle: r.album.title,
+            artistId: r.album.artistId,
+            artistName: r.album.artist.name,
+            duration: r.duration,
+            rank: 0,
+        }));
     }
 
     async searchTracks({
@@ -281,6 +352,9 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchTracksFallback({ query, limit, offset });
+        }
 
         try {
             const results = await prisma.$queryRaw<TrackSearchResult[]>`
@@ -305,48 +379,7 @@ export class SearchService {
             return results;
         } catch (error) {
             logger.error("Track search error:", error);
-            // Fallback to LIKE query
-            const results = await prisma.track.findMany({
-                where: {
-                    title: {
-                        contains: query,
-                        mode: "insensitive",
-                    },
-                },
-                select: {
-                    id: true,
-                    title: true,
-                    albumId: true,
-                    duration: true,
-                    album: {
-                        select: {
-                            title: true,
-                            artistId: true,
-                            artist: {
-                                select: {
-                                    name: true,
-                                },
-                            },
-                        },
-                    },
-                },
-                take: limit,
-                skip: offset,
-                orderBy: {
-                    title: "asc",
-                },
-            });
-
-            return results.map((r) => ({
-                id: r.id,
-                title: r.title,
-                albumId: r.albumId,
-                albumTitle: r.album.title,
-                artistId: r.album.artistId,
-                artistName: r.album.artist.name,
-                duration: r.duration,
-                rank: 0,
-            }));
+            return this.searchTracksFallback({ query, limit, offset });
         }
     }
 
@@ -363,6 +396,9 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchPodcasts({ query, limit, offset });
+        }
 
         try {
             const results = await prisma.$queryRaw<PodcastSearchResult[]>`
@@ -389,9 +425,62 @@ export class SearchService {
         }
     }
 
-    /**
-     * Search podcast episodes using PostgreSQL full-text search
-     */
+    private async searchEpisodesFallback({
+        query,
+        limit = 20,
+        offset = 0,
+    }: SearchOptions): Promise<EpisodeSearchResult[]> {
+        const results = await prisma.podcastEpisode.findMany({
+            where: {
+                OR: [
+                    {
+                        title: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        description: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                title: true,
+                description: true,
+                podcastId: true,
+                publishedAt: true,
+                duration: true,
+                audioUrl: true,
+                podcast: {
+                    select: {
+                        title: true,
+                    },
+                },
+            },
+            take: limit,
+            skip: offset,
+            orderBy: {
+                publishedAt: "desc",
+            },
+        });
+
+        return results.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            podcastId: r.podcastId,
+            podcastTitle: r.podcast.title,
+            publishedAt: r.publishedAt,
+            duration: r.duration,
+            audioUrl: r.audioUrl,
+            rank: 0,
+        }));
+    }
+
     async searchEpisodes({
         query,
         limit = 20,
@@ -402,6 +491,9 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchEpisodesFallback({ query, limit, offset });
+        }
 
         try {
             const results = await prisma.$queryRaw<EpisodeSearchResult[]>`
@@ -426,56 +518,7 @@ export class SearchService {
             return results;
         } catch (error) {
             logger.error("Episode search error:", error);
-            // Fallback to LIKE search
-            const results = await prisma.podcastEpisode.findMany({
-                where: {
-                    OR: [
-                        {
-                            title: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                        {
-                            description: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                    ],
-                },
-                select: {
-                    id: true,
-                    title: true,
-                    description: true,
-                    podcastId: true,
-                    publishedAt: true,
-                    duration: true,
-                    audioUrl: true,
-                    podcast: {
-                        select: {
-                            title: true,
-                        },
-                    },
-                },
-                take: limit,
-                skip: offset,
-                orderBy: {
-                    publishedAt: "desc",
-                },
-            });
-
-            return results.map((r) => ({
-                id: r.id,
-                title: r.title,
-                description: r.description,
-                podcastId: r.podcastId,
-                podcastTitle: r.podcast.title,
-                publishedAt: r.publishedAt,
-                duration: r.duration,
-                audioUrl: r.audioUrl,
-                rank: 0,
-            }));
+            return this.searchEpisodesFallback({ query, limit, offset });
         }
     }
 
@@ -493,6 +536,9 @@ export class SearchService {
         }
 
         const tsquery = this.queryToTsquery(query);
+        if (!tsquery) {
+            return this.searchAudiobooksFallback({ query, limit, offset });
+        }
 
         try {
             const results = await prisma.$queryRaw<AudiobookSearchResult[]>`
@@ -513,7 +559,6 @@ export class SearchService {
         OFFSET ${offset}
       `;
 
-            // If we have results from cache, return them with transformed coverUrl
             if (results.length > 0) {
                 return results.map((r) => ({
                     ...r,
@@ -521,62 +566,69 @@ export class SearchService {
                 }));
             }
 
-            // If cache is empty, fall back to LIKE search on cached audiobooks
-            const likeResults = await prisma.audiobook.findMany({
-                where: {
-                    OR: [
-                        {
-                            title: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                        {
-                            author: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                        {
-                            narrator: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                        {
-                            series: {
-                                contains: query,
-                                mode: "insensitive",
-                            },
-                        },
-                    ],
-                },
-                select: {
-                    id: true,
-                    title: true,
-                    author: true,
-                    narrator: true,
-                    series: true,
-                    description: true,
-                    coverUrl: true,
-                    duration: true,
-                },
-                take: limit,
-                skip: offset,
-                orderBy: {
-                    title: "asc",
-                },
-            });
-
-            return likeResults.map((r) => ({
-                ...r,
-                coverUrl: r.coverUrl ? `/audiobooks/${r.id}/cover` : null,
-                rank: 0,
-            }));
+            return this.searchAudiobooksFallback({ query, limit, offset });
         } catch (error) {
             logger.error("Audiobook FTS search error:", error);
-            return [];
+            return this.searchAudiobooksFallback({ query, limit, offset });
         }
+    }
+
+    private async searchAudiobooksFallback({
+        query,
+        limit = 20,
+        offset = 0,
+    }: SearchOptions): Promise<AudiobookSearchResult[]> {
+        const results = await prisma.audiobook.findMany({
+            where: {
+                OR: [
+                    {
+                        title: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        author: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        narrator: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        series: {
+                            contains: query,
+                            mode: "insensitive",
+                        },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                title: true,
+                author: true,
+                narrator: true,
+                series: true,
+                description: true,
+                coverUrl: true,
+                duration: true,
+            },
+            take: limit,
+            skip: offset,
+            orderBy: {
+                title: "asc",
+            },
+        });
+
+        return results.map((r) => ({
+            ...r,
+            coverUrl: r.coverUrl ? `/audiobooks/${r.id}/cover` : null,
+            rank: 0,
+        }));
     }
 
     /**
@@ -655,7 +707,7 @@ export class SearchService {
         }
 
         // Check Redis cache first
-        const cacheKey = `search:all:${query}:${limit}:${genre || ""}`;
+        const cacheKey = `search:all:${normalizeCacheQuery(query)}:${limit}:${genre || ""}`;
         try {
             const cached = await redisClient.get(cacheKey);
             if (cached) {
@@ -766,7 +818,7 @@ export class SearchService {
         }
 
         // Check cache
-        const cacheKey = `search:${type}:${query}:${limit}:${genre || ""}`;
+        const cacheKey = `search:${type}:${normalizeCacheQuery(query)}:${limit}:${genre || ""}`;
         try {
             const cached = await redisClient.get(cacheKey);
             if (cached) {

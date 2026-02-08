@@ -1,5 +1,6 @@
 import { prisma } from "../utils/db";
 import { logger } from "../utils/logger";
+import { normalizeArtistName } from "../utils/artistNormalization";
 import { lastFmService } from "./lastfm";
 import { moodBucketService } from "./moodBucketService";
 import {
@@ -892,17 +893,18 @@ export class ProgrammaticPlaylistService {
         // Get similar artists from Last.fm
         try {
             const similarArtists = await lastFmService.getSimilarArtists(
+                topArtist.mbid || "",
                 topArtist.name,
-                "10"
+                10
             );
 
             logger.debug(
                 `[ARTIST SIMILAR MIX] Last.fm returned ${similarArtists.length} similar artists`
             );
 
-            const similarArtistNames = similarArtists.map((a) => a.name);
+            const similarArtistNormalized = similarArtists.map((a) => normalizeArtistName(a.name));
             const artistsInLibrary = await prisma.artist.findMany({
-                where: { name: { in: similarArtistNames } },
+                where: { normalizedName: { in: similarArtistNormalized } },
                 include: {
                     albums: {
                         include: {
