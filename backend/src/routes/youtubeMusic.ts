@@ -510,4 +510,47 @@ router.post(
     }
 );
 
+// ── Batch Gap-Fill Match ───────────────────────────────────────────
+
+router.post(
+    "/match-batch",
+    requireAuth,
+    requireYtMusicEnabled,
+    async (req: Request, res: Response) => {
+        try {
+            const userId = req.user!.id;
+            await ensureUserOAuth(userId);
+
+            const { tracks } = req.body;
+            if (!Array.isArray(tracks) || tracks.length === 0) {
+                return res
+                    .status(400)
+                    .json({ error: "tracks array is required" });
+            }
+
+            // Cap at 50 tracks per batch to prevent abuse
+            const capped = tracks.slice(0, 50).map(
+                (t: { artist?: string; title?: string; albumTitle?: string }) => ({
+                    artist: t.artist || "",
+                    title: t.title || "",
+                    albumTitle: t.albumTitle,
+                })
+            );
+
+            const matches = await ytMusicService.findMatchesForAlbum(
+                userId,
+                capped
+            );
+
+            // Return matches keyed by index for easy lookup
+            res.json({ matches });
+        } catch (err: any) {
+            logger.error("[YTMusic Route] Batch match failed:", err);
+            res.status(500).json({
+                error: "Failed to batch-match tracks",
+            });
+        }
+    }
+);
+
 export default router;

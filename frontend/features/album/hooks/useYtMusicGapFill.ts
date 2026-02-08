@@ -5,6 +5,9 @@
  * When the user has YouTube Music connected, this hook matches unowned
  * tracks against YTMusic and marks them as streamable so the player
  * can stream them via the backend proxy instead of showing a 30s preview.
+ *
+ * Performance: uses a single batch match request instead of N individual
+ * calls, and caches matches globally so revisiting an album is instant.
  */
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
@@ -45,6 +48,12 @@ export function invalidateYtMusicStatusCache() {
     _ytStatusCache = null;
 }
 
+// ── Global match cache ────────────────────────────────────────────
+// Persists matches across hook instances / page navigations so
+// revisiting an album doesn't trigger another round-trip.
+// Keyed by albumId → track matches.
+const _matchCache = new Map<string, Record<string, YtMusicMatch>>();
+
 export function useYtMusicGapFill(
     album: Album | null | undefined,
     source: AlbumSource | null
@@ -73,61 +82,62 @@ export function useYtMusicGapFill(
         if (!album?.tracks || !ytMusicAvailable) return [];
         if (source === "library") {
             // For library albums, all tracks are owned — no gap fill needed
-            // (In the future we could check per-track ownership for partial albums)
             return [];
         }
         // Discovery album — all tracks are unowned
         return album.tracks;
     }, [album?.tracks, album?.id, source, ytMusicAvailable]);
 
-    // Match unowned tracks against YTMusic
+    // Match unowned tracks against YTMusic (single batch call)
     useEffect(() => {
         if (!unownedTracks.length || !album?.id) return;
         // Don't re-match if we already matched this album
         if (matchedAlbumIdRef.current === album.id) return;
+
+        // Check global cache first — instant on revisit
+        const cached = _matchCache.get(album.id);
+        if (cached) {
+            matchedAlbumIdRef.current = album.id;
+            setMatches(cached);
+            return;
+        }
 
         let cancelled = false;
         matchedAlbumIdRef.current = album.id;
         setLoading(true);
 
         const matchTracks = async () => {
-            const newMatches: Record<string, YtMusicMatch> = {};
+            // Build batch request — one entry per unowned track
+            const trackPayload = unownedTracks.map((track) => ({
+                artist: track.artist?.name || album?.artist?.name || "",
+                title: track.title,
+                albumTitle: album?.title,
+            }));
 
-            // Match tracks in parallel with a concurrency limit
-            const BATCH_SIZE = 10;
-            for (let i = 0; i < unownedTracks.length; i += BATCH_SIZE) {
-                if (cancelled) break;
-                const batch = unownedTracks.slice(i, i + BATCH_SIZE);
-                const results = await Promise.allSettled(
-                    batch.map((track) =>
-                        api.matchYtMusicTrack(
-                            track.artist?.name || album?.artist?.name || "",
-                            track.title,
-                            album?.title
-                        )
-                    )
-                );
+            try {
+                // Single batch call — sidecar runs all searches concurrently
+                const { matches: batchMatches } = await api.matchYtMusicBatch(trackPayload);
 
-                results.forEach((result, idx) => {
-                    if (
-                        result.status === "fulfilled" &&
-                        result.value.match
-                    ) {
-                        newMatches[batch[idx].id] = result.value.match;
+                if (cancelled) return;
+
+                const newMatches: Record<string, YtMusicMatch> = {};
+                batchMatches.forEach((match, idx) => {
+                    if (match && unownedTracks[idx]) {
+                        newMatches[unownedTracks[idx].id] = match;
                     }
                 });
+
+                // Store in global cache for instant revisits
+                _matchCache.set(album.id, newMatches);
+                setMatches(newMatches);
+            } catch (err) {
+                console.error("[YTMusic Gap-Fill] Batch match failed:", err);
             }
 
-            if (!cancelled) {
-                setMatches(newMatches);
-                setLoading(false);
-            }
+            if (!cancelled) setLoading(false);
         };
 
-        matchTracks().catch((err) => {
-            console.error("[YTMusic Gap-Fill] Matching failed:", err);
-            if (!cancelled) setLoading(false);
-        });
+        matchTracks();
 
         return () => {
             cancelled = true;
@@ -146,6 +156,8 @@ export function useYtMusicGapFill(
                     ...track,
                     streamSource: "youtube" as const,
                     youtubeVideoId: match.videoId,
+                    // Use YT Music duration if the track doesn't have one
+                    duration: track.duration || match.duration,
                 };
             }
             return track;

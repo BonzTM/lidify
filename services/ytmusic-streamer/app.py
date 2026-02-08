@@ -136,6 +136,18 @@ class SearchRequest(BaseModel):
     limit: int = 20
 
 
+class BatchSearchQuery(BaseModel):
+    """A single query within a batch search request."""
+    query: str
+    filter: Optional[Literal["songs", "albums", "artists", "videos"]] = None
+    limit: int = 5  # Lower default for batch — we only need top results
+
+
+class BatchSearchRequest(BaseModel):
+    """Batch of search queries to execute concurrently."""
+    queries: list[BatchSearchQuery]
+
+
 # ════════════════════════════════════════════════════════════════════
 # Helpers
 # ════════════════════════════════════════════════════════════════════
@@ -675,6 +687,31 @@ async def search(req: SearchRequest, user_id: str = Query(...)):
     except Exception as e:
         log.error(f"Search failed for user {user_id} query={req.query!r} filter={req.filter!r}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/batch")
+async def search_batch(req: BatchSearchRequest, user_id: str = Query(...)):
+    """Run multiple search queries concurrently and return all results.
+
+    This is dramatically faster than calling /search N times sequentially
+    because all queries share one YTMusic instance and run in parallel
+    via asyncio.gather, avoiding N separate HTTP round-trips.
+    """
+    yt = _get_ytmusic(user_id)
+
+    async def _run_one(q: BatchSearchQuery) -> dict:
+        try:
+            items = await asyncio.to_thread(
+                _tv_search, yt, q.query, filter=q.filter, limit=q.limit
+            )
+            return {"results": items, "total": len(items), "error": None}
+        except Exception as e:
+            log.warning(f"Batch search failed for query={q.query!r}: {e}")
+            return {"results": [], "total": 0, "error": str(e)}
+
+    log.debug(f"Batch search: {len(req.queries)} queries for user {user_id}")
+    results = await asyncio.gather(*[_run_one(q) for q in req.queries])
+    return {"results": list(results)}
 
 
 @app.post("/search/debug")

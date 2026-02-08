@@ -301,6 +301,127 @@ class YouTubeMusicService {
     // ── Gap-Fill Matching ──────────────────────────────────────────
 
     /**
+     * Run multiple search queries against the sidecar concurrently.
+     * The sidecar executes all queries in parallel via asyncio.gather,
+     * so N queries take ~1 round-trip instead of N sequential ones.
+     */
+    async searchBatch(
+        userId: string,
+        queries: Array<{ query: string; filter?: "songs" | "albums" | "artists" | "videos"; limit?: number }>
+    ): Promise<Array<{ results: any[]; total: number; error: string | null }>> {
+        const res = await this.client.post(
+            "/search/batch",
+            { queries },
+            {
+                params: { user_id: userId },
+                timeout: 60_000, // Longer timeout for batch
+            }
+        );
+        return res.data.results;
+    }
+
+    /**
+     * Match an entire album's tracks against YouTube Music in one
+     * batch call. Instead of N individual match requests (each doing
+     * up to 3 search fallbacks), this:
+     *   1. Sends all search queries in a single batch to the sidecar
+     *   2. Runs them concurrently on the sidecar via asyncio.gather
+     *   3. Returns matches keyed by track index
+     *
+     * Falls back to individual matching for tracks that didn't match
+     * in the filtered batch.
+     */
+    async findMatchesForAlbum(
+        userId: string,
+        tracks: Array<{ artist: string; title: string; albumTitle?: string }>
+    ): Promise<Array<{ videoId: string; title: string; duration: number } | null>> {
+        // Step 1: Build filtered "songs" search queries for all tracks
+        const queries = tracks.map((t) => {
+            const cleanArtist = this.sanitizeQuery(t.artist);
+            const cleanTitle = this.sanitizeQuery(t.title);
+            return {
+                query: `${cleanArtist} ${cleanTitle}`,
+                filter: "songs" as const,
+                limit: 3,
+            };
+        });
+
+        // Step 2: Execute all queries concurrently in one batch call
+        let batchResults: Array<{ results: any[]; total: number; error: string | null }>;
+        try {
+            batchResults = await this.searchBatch(userId, queries);
+        } catch (err) {
+            logger.warn("[YTMusic] Batch search failed, falling back to individual:", err);
+            // Fallback: match each track individually
+            return Promise.all(
+                tracks.map((t) => this.findMatchForTrack(userId, t.artist, t.title, t.albumTitle))
+            );
+        }
+
+        // Step 3: Extract matches from batch results
+        const matches: Array<{ videoId: string; title: string; duration: number } | null> = [];
+        const unmatchedIndices: number[] = [];
+
+        for (let i = 0; i < tracks.length; i++) {
+            const result = batchResults[i];
+            if (result && !result.error && result.results?.length) {
+                const song = result.results[0];
+                if (song?.videoId) {
+                    matches.push({
+                        videoId: song.videoId,
+                        title: song.title || tracks[i].title,
+                        duration: song.duration_seconds || song.duration || 0,
+                    });
+                    continue;
+                }
+            }
+            // No match from filtered search — try unfiltered fallback
+            matches.push(null);
+            unmatchedIndices.push(i);
+        }
+
+        // Step 4: For unmatched tracks, try unfiltered search in a second batch
+        if (unmatchedIndices.length > 0) {
+            const fallbackQueries = unmatchedIndices.map((idx) => {
+                const t = tracks[idx];
+                const cleanArtist = this.sanitizeQuery(t.artist);
+                const cleanTitle = this.sanitizeQuery(t.title);
+                // Try with album title for disambiguation
+                const cleanAlbum = t.albumTitle ? this.sanitizeQuery(t.albumTitle) : "";
+                const query = cleanAlbum
+                    ? `${cleanArtist} ${cleanTitle} ${cleanAlbum}`
+                    : `${cleanArtist} ${cleanTitle}`;
+                return { query, limit: 5 };
+            });
+
+            try {
+                const fallbackResults = await this.searchBatch(userId, fallbackQueries);
+                for (let j = 0; j < unmatchedIndices.length; j++) {
+                    const idx = unmatchedIndices[j];
+                    const result = fallbackResults[j];
+                    if (result && !result.error && result.results?.length) {
+                        const song = result.results.find(
+                            (r: any) => r.type === "song" && r.videoId
+                        );
+                        if (song) {
+                            matches[idx] = {
+                                videoId: song.videoId,
+                                title: song.title || tracks[idx].title,
+                                duration: song.duration_seconds || song.duration || 0,
+                            };
+                        }
+                    }
+                }
+            } catch (err) {
+                logger.warn("[YTMusic] Batch fallback search failed:", err);
+                // Leave unmatched tracks as null
+            }
+        }
+
+        return matches;
+    }
+
+    /**
      * Sanitize a search query for YouTube Music.
      * Strips characters that cause HTTP 400 from Google's API:
      * parentheses, brackets, featuring tags, remaster suffixes, etc.
