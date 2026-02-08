@@ -221,29 +221,45 @@ async function checkPostgresConnection() {
 }
 
 async function checkRedisConnection() {
-    try {
-        // Check if Redis client is actually connected
-        // The redis client has automatic reconnection, so we need to check status first
-        if (!redisClient.isReady) {
-            throw new Error(
-                "Redis client is not ready - connection failed or still connecting"
-            );
-        }
+    const MAX_RETRIES = 10;
+    const BASE_DELAY_MS = 1_000; // 1 second
+    const MAX_DELAY_MS = 15_000; // 15 seconds
 
-        // If connected, verify with ping
-        await redisClient.ping();
-        logger.debug("✓ Redis connection verified");
-    } catch (error) {
-        logger.error("✗ Redis connection failed:", {
-            error: error instanceof Error ? error.message : String(error),
-            redisUrl: config.redisUrl?.replace(/:[^:@]+@/, ":***@"), // Hide password if any
-        });
-        logger.error("Unable to connect to Redis. Please ensure:");
-        logger.error(
-            "  1. Redis is running on the correct port (default: 6380)"
-        );
-        logger.error("  2. REDIS_URL in .env is correct");
-        process.exit(1);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            // Check if Redis client is actually connected
+            if (!redisClient.isReady) {
+                throw new Error(
+                    "Redis client is not ready - connection failed or still connecting"
+                );
+            }
+
+            // If connected, verify with ping
+            await redisClient.ping();
+            logger.debug("✓ Redis connection verified");
+            return; // Success – exit the loop
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+
+            if (attempt < MAX_RETRIES) {
+                const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), MAX_DELAY_MS);
+                logger.warn(
+                    `Redis connection attempt ${attempt}/${MAX_RETRIES} failed: ${errorMsg} – retrying in ${delay}ms`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, delay));
+            } else {
+                logger.error("✗ Redis connection failed after all retries:", {
+                    error: errorMsg,
+                    redisUrl: config.redisUrl?.replace(/:[^:@]+@/, ":***@"),
+                });
+                logger.error("Unable to connect to Redis. Please ensure:");
+                logger.error(
+                    "  1. Redis is running on the correct port (default: 6379)"
+                );
+                logger.error("  2. REDIS_URL in .env is correct");
+                process.exit(1);
+            }
+        }
     }
 }
 

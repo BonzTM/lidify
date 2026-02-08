@@ -7,6 +7,7 @@
 
 import { logger } from "../utils/logger";
 import Redis from "ioredis";
+import { createIORedisClient } from "../utils/ioredis";
 import { config } from "../config";
 
 const ENRICHMENT_STATE_KEY = "enrichment:state";
@@ -58,8 +59,8 @@ class EnrichmentStateService {
     private publisher: Redis;
 
     constructor() {
-        this.redis = new Redis(config.redisUrl);
-        this.publisher = new Redis(config.redisUrl);
+        this.redis = createIORedisClient("enrichment-state");
+        this.publisher = createIORedisClient("enrichment-publisher");
     }
 
     /**

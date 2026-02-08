@@ -16,6 +16,7 @@ import { prisma } from "../utils/db";
 import { enrichSimilarArtist } from "./artistEnrichment";
 import { lastFmService } from "../services/lastfm";
 import Redis from "ioredis";
+import { createIORedisClient } from "../utils/ioredis";
 import { config } from "../config";
 import { enrichmentStateService } from "../services/enrichmentState";
 import { enrichmentFailureService } from "../services/enrichmentFailureService";
@@ -169,7 +170,7 @@ function filterMoodTags(tags: string[]): string[] {
  */
 function getRedis(): Redis {
     if (!redis) {
-        redis = new Redis(config.redisUrl);
+        redis = createIORedisClient("enrichment-queue");
     }
     return redis;
 }
@@ -179,7 +180,7 @@ function getRedis(): Redis {
  */
 async function setupControlChannel() {
     if (!controlSubscriber) {
-        controlSubscriber = new Redis(config.redisUrl);
+        controlSubscriber = createIORedisClient("enrichment-control-sub");
         await controlSubscriber.subscribe("enrichment:control");
 
         controlSubscriber.on("message", (channel, message) => {
