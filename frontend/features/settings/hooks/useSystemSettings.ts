@@ -38,6 +38,10 @@ const defaultSystemSettings: SystemSettings = {
     // Download preferences
     downloadSource: "soulseek",
     primaryFailureFallback: "none",
+    // YouTube Music streaming
+    ytMusicEnabled: false,
+    ytMusicClientId: "",
+    ytMusicClientSecret: "",
 };
 
 export function useSystemSettings() {

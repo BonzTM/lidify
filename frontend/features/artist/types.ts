@@ -59,11 +59,18 @@ export interface Track {
         title?: string;
         coverArt?: string;
     };
+    artist?: {
+        id?: string;
+        name?: string;
+    };
     trackNo?: number;
     // User overrides (non-destructive edits)
     displayTitle?: string | null;
     displayTrackNo?: number | null;
     hasUserOverrides?: boolean;
+    // YouTube Music streaming fields
+    streamSource?: "local" | "youtube";
+    youtubeVideoId?: string;
 }
 
 export interface SimilarArtist {

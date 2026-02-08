@@ -2038,13 +2038,41 @@ router.get("/cover-art/:id?", imageLimiter, async (req, res) => {
         }
 
         // Fetch the image and proxy it to avoid CORS issues
+        // Retry with exponential backoff to handle transient ECONNRESET errors
         logger.debug(`[COVER-ART] Fetching: ${coverUrl.substring(0, 100)}...`);
-        const imageResponse = await fetch(coverUrl, {
-            headers: {
-                "User-Agent":
-                    "Lidify/1.0.0 (https://github.com/Chevron7Locked/lidify)",
-            },
-        });
+        const MAX_RETRIES = 3;
+        let imageResponse: Response | null = null;
+        let lastError: unknown = null;
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                imageResponse = await fetch(coverUrl, {
+                    headers: {
+                        "User-Agent":
+                            "Lidify/1.0.0 (https://github.com/Chevron7Locked/lidify)",
+                    },
+                    signal: AbortSignal.timeout(15_000), // 15s timeout
+                });
+                break; // Success — exit retry loop
+            } catch (fetchError) {
+                lastError = fetchError;
+                if (attempt < MAX_RETRIES) {
+                    const delay = Math.min(500 * Math.pow(2, attempt - 1), 4000);
+                    logger.warn(
+                        `[COVER-ART] Fetch attempt ${attempt}/${MAX_RETRIES} failed (${(fetchError as Error)?.message || fetchError}), retrying in ${delay}ms...`
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        if (!imageResponse) {
+            logger.error(
+                `[COVER-ART] All ${MAX_RETRIES} fetch attempts failed for ${coverUrl}: ${(lastError as Error)?.message || lastError}`
+            );
+            return res.status(502).json({ error: "Failed to fetch cover art" });
+        }
+
         if (!imageResponse.ok) {
             logger.error(
                 `[COVER-ART] Failed to fetch: ${coverUrl} (${imageResponse.status} ${imageResponse.statusText})`

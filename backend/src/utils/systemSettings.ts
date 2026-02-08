@@ -73,6 +73,10 @@ export async function getSystemSettings(forceRefresh = false) {
             settings.soulseekPassword,
             "soulseekPassword",
         ),
+        ytMusicClientSecret: safeDecrypt(
+            settings.ytMusicClientSecret,
+            "ytMusicClientSecret",
+        ),
     };
 
     cachedSettings = decrypted;

@@ -35,6 +35,8 @@ export function useAlbumActions() {
                     id: album.id,
                     coverArt: album.coverArt || album.coverUrl,
                 },
+                streamSource: track.streamSource,
+                youtubeVideoId: track.youtubeVideoId,
             }));
 
         if (formattedTracks) {
@@ -63,6 +65,8 @@ export function useAlbumActions() {
                     id: album.id,
                     coverArt: album.coverArt || album.coverUrl,
                 },
+                streamSource: track.streamSource,
+                youtubeVideoId: track.youtubeVideoId,
             }));
 
         if (formattedTracks) {
@@ -91,6 +95,8 @@ export function useAlbumActions() {
                 id: album.id,
                 coverArt: album.coverArt || album.coverUrl,
             },
+            streamSource: track.streamSource,
+            youtubeVideoId: track.youtubeVideoId,
         };
 
         playTrackAudio(formattedTrack);
@@ -115,6 +121,8 @@ export function useAlbumActions() {
                 id: album.id,
                 coverArt: album.coverArt || album.coverUrl,
             },
+            streamSource: track.streamSource,
+            youtubeVideoId: track.youtubeVideoId,
         };
 
         addToQueueAudio(formattedTrack);

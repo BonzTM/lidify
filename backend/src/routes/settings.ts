@@ -14,6 +14,8 @@ const settingsSchema = z.object({
     wifiOnly: z.boolean().optional(),
     offlineEnabled: z.boolean().optional(),
     maxCacheSizeMb: z.number().int().min(0).optional(),
+    // YouTube Music (per-user)
+    ytMusicQuality: z.enum(["LOW", "MEDIUM", "HIGH", "LOSSLESS"]).optional(),
 });
 
 // GET /settings

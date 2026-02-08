@@ -2,6 +2,7 @@
 
 import { useAudio } from "@/lib/audio-context";
 import { useMediaInfo } from "@/hooks/useMediaInfo";
+import { useStreamBitrate } from "@/hooks/useStreamBitrate";
 import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import Image from "next/image";
 import Link from "next/link";
@@ -135,6 +136,7 @@ export function MiniPlayer() {
     };
 
     const { title, subtitle, coverUrl, mediaLink, hasMedia } = useMediaInfo(100);
+    const { bitrate: streamBitrate } = useStreamBitrate();
 
     // Check if controls should be enabled (only for tracks)
     const canSkip = playbackType === "track";
@@ -355,9 +357,16 @@ export function MiniPlayer() {
                                             <p className="text-white text-sm font-medium truncate leading-tight">
                                                 {title}
                                             </p>
-                                            <p className="text-gray-300/70 text-xs truncate leading-tight mt-0.5">
-                                                {subtitle}
-                                            </p>
+                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                <p className="text-gray-300/70 text-xs truncate leading-tight">
+                                                    {subtitle}
+                                                </p>
+                                                {currentTrack?.streamSource === "youtube" && (
+                                                    <span className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded bg-red-500/20 text-red-400 leading-none">
+                                                        YT{streamBitrate ? ` ${streamBitrate}k` : ""}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </>
                                     )}
                                 </div>
@@ -581,6 +590,11 @@ export function MiniPlayer() {
                             <p className="text-gray-400 truncate text-xs">
                                 {subtitle}
                             </p>
+                            {currentTrack?.streamSource === "youtube" && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 bg-red-500/20 text-red-400">
+                                    YT Music{streamBitrate ? ` · ${streamBitrate} kbps` : ""}
+                                </span>
+                            )}
                         </div>
 
                         {/* Mode Switch Buttons */}

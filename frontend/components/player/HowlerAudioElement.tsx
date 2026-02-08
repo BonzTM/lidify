@@ -442,6 +442,14 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                 return;
             }
 
+            // Skip if the track is still loading — the load-complete handler
+            // will start playback.  Without this guard, a second play click
+            // during loading can race with the load callback and produce
+            // overlapping audio streams.
+            if (isLoadingRef.current) {
+                return;
+            }
+
             const shouldPlay = lastPlayingStateRef.current || isPlaying;
             const isCurrentlyPlaying = howlerEngine.isPlaying();
 
@@ -466,7 +474,12 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         let startTime = 0;
 
         if (playbackType === "track" && currentTrack) {
-            streamUrl = api.getStreamUrl(currentTrack.id);
+            // YouTube Music streams use the proxy endpoint
+            if (currentTrack.streamSource === "youtube" && currentTrack.youtubeVideoId) {
+                streamUrl = api.getYtMusicStreamUrl(currentTrack.youtubeVideoId);
+            } else {
+                streamUrl = api.getStreamUrl(currentTrack.id);
+            }
         } else if (playbackType === "audiobook" && currentAudiobook) {
             streamUrl = api.getAudiobookStreamUrl(currentAudiobook.id);
             startTime = currentAudiobook.progress?.currentTime || 0;
@@ -496,13 +509,18 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
             setDuration(fallbackDuration);
 
             let format = "mp3";
-            const filePath = currentTrack?.filePath || "";
-            if (filePath) {
-                const ext = filePath.split(".").pop()?.toLowerCase();
-                if (ext === "flac") format = "flac";
-                else if (ext === "m4a" || ext === "aac") format = "mp4";
-                else if (ext === "ogg" || ext === "opus") format = "webm";
-                else if (ext === "wav") format = "wav";
+            if (currentTrack?.streamSource === "youtube") {
+                // YouTube Music streams are AAC in MP4 container
+                format = "mp4";
+            } else {
+                const filePath = currentTrack?.filePath || "";
+                if (filePath) {
+                    const ext = filePath.split(".").pop()?.toLowerCase();
+                    if (ext === "flac") format = "flac";
+                    else if (ext === "m4a" || ext === "aac") format = "mp4";
+                    else if (ext === "ogg" || ext === "opus") format = "webm";
+                    else if (ext === "wav") format = "wav";
+                }
             }
 
             howlerEngine.load(streamUrl, false, format);
