@@ -301,9 +301,28 @@ class YouTubeMusicService {
     // ── Gap-Fill Matching ──────────────────────────────────────────
 
     /**
+     * Sanitize a search query for YouTube Music.
+     * Strips characters that cause HTTP 400 from Google's API:
+     * parentheses, brackets, featuring tags, remaster suffixes, etc.
+     */
+    private sanitizeQuery(text: string): string {
+        return text
+            .replace(/\s*\(.*?\)\s*/g, " ")     // Remove (Deluxe Edition), (feat. X), etc.
+            .replace(/\s*\[.*?\]\s*/g, " ")      // Remove [Remastered], [Explicit], etc.
+            .replace(/[^\p{L}\p{N}\s'-]/gu, " ") // Keep letters, numbers, spaces, hyphens, apostrophes
+            .replace(/\s+/g, " ")                 // Collapse whitespace
+            .trim();
+    }
+
+    /**
      * Find a matching YouTube Music track for an album track that
      * isn't in the local library. Searches by "{artist} {title}" and
      * picks the first song result that closely matches.
+     *
+     * Uses a tiered fallback strategy:
+     *   1. artist + title (filtered to songs)
+     *   2. artist + title (unfiltered, pick first song result)
+     *   3. artist + title + album (unfiltered, pick first song result)
      */
     async findMatchForTrack(
         userId: string,
@@ -311,30 +330,67 @@ class YouTubeMusicService {
         title: string,
         albumTitle?: string
     ): Promise<{ videoId: string; title: string; duration: number } | null> {
+        const cleanArtist = this.sanitizeQuery(artist);
+        const cleanTitle = this.sanitizeQuery(title);
+        const shortQuery = `${cleanArtist} ${cleanTitle}`;
+
+        // --- Attempt 1: filtered search (songs only) ---
         try {
-            const query = albumTitle
-                ? `${artist} ${title} ${albumTitle}`
-                : `${artist} ${title}`;
-
-            const searchResult = await this.search(userId, query, "songs");
-            if (!searchResult.results || searchResult.results.length === 0) {
-                return null;
+            const result = await this.search(userId, shortQuery, "songs");
+            if (result.results?.length) {
+                const match = result.results[0];
+                return {
+                    videoId: match.videoId,
+                    title: match.title,
+                    duration: match.duration_seconds || match.duration || 0,
+                };
             }
-
-            // Return the first result — the sidecar already orders by relevance
-            const match = searchResult.results[0];
-            return {
-                videoId: match.videoId,
-                title: match.title,
-                duration: match.duration_seconds || match.duration || 0,
-            };
-        } catch (err) {
-            logger.warn(
-                `[YTMusic] Failed to find match for "${artist} - ${title}":`,
-                err
-            );
-            return null;
+        } catch {
+            // Filtered search failed (HTTP 400) — fall through
         }
+
+        // --- Attempt 2: unfiltered search, pick first song ---
+        try {
+            const result = await this.search(userId, shortQuery);
+            const song = result.results?.find(
+                (r: any) => r.type === "song" && r.videoId
+            );
+            if (song) {
+                return {
+                    videoId: song.videoId,
+                    title: song.title,
+                    duration: song.duration_seconds || song.duration || 0,
+                };
+            }
+        } catch {
+            // Unfiltered search also failed — fall through
+        }
+
+        // --- Attempt 3: add album title for disambiguation ---
+        if (albumTitle) {
+            const cleanAlbum = this.sanitizeQuery(albumTitle);
+            const longQuery = `${cleanArtist} ${cleanTitle} ${cleanAlbum}`;
+            try {
+                const result = await this.search(userId, longQuery);
+                const song = result.results?.find(
+                    (r: any) => r.type === "song" && r.videoId
+                );
+                if (song) {
+                    return {
+                        videoId: song.videoId,
+                        title: song.title,
+                        duration: song.duration_seconds || song.duration || 0,
+                    };
+                }
+            } catch (err) {
+                logger.warn(
+                    `[YTMusic] All search attempts failed for "${artist} - ${title}":`,
+                    err
+                );
+            }
+        }
+
+        return null;
     }
 }
 

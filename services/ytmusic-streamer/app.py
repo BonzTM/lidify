@@ -409,6 +409,7 @@ async def search(req: SearchRequest, user_id: str = Query(...)):
     yt = _get_ytmusic(user_id)
 
     try:
+        log.debug(f"Search: query={req.query!r}, filter={req.filter!r}, limit={req.limit}")
         results = yt.search(req.query, filter=req.filter, limit=req.limit)
 
         items = []
@@ -467,7 +468,7 @@ async def search(req: SearchRequest, user_id: str = Query(...)):
 
         return {"results": items, "total": len(items)}
     except Exception as e:
-        log.error(f"Search failed for user {user_id}: {e}")
+        log.error(f"Search failed for user {user_id} query={req.query!r} filter={req.filter!r}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
