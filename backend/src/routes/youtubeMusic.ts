@@ -410,6 +410,18 @@ router.get(
             }
 
             // Pipe the audio stream to the client
+            // Handle upstream errors gracefully — if the sidecar drops the
+            // connection mid-stream the browser will retry with a new Range.
+            proxyRes.data.on("error", (streamErr: Error) => {
+                logger.warn(
+                    `[YTMusic Route] Upstream stream error for ${videoId}: ${streamErr.message}`
+                );
+                if (!res.headersSent) {
+                    res.status(502).json({ error: "Upstream stream failed" });
+                } else {
+                    res.end();
+                }
+            });
             proxyRes.data.pipe(res);
         } catch (err: any) {
             if (err.response?.status === 404) {

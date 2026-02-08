@@ -867,9 +867,11 @@ async def proxy_stream(
                 async with client.stream("GET", stream_url, headers=headers) as response:
                     async for chunk in response.aiter_bytes(chunk_size=65536):
                         yield chunk
-            except httpx.HTTPError as e:
+            except (httpx.HTTPError, httpx.StreamError, httpx.ReadError) as e:
                 log.error(f"Upstream stream error for {video_id}: {e}")
-                raise
+                # Don't re-raise — just end the stream gracefully so the
+                # browser audio element can retry with a new Range request.
+                return
 
     # For range requests, fetch upstream first to get headers
     if headers.get("Range"):
@@ -888,9 +890,14 @@ async def proxy_stream(
                 response_headers["Content-Length"] = upstream.headers["content-length"]
 
             async def range_stream():
-                async for chunk in upstream.aiter_bytes(chunk_size=65536):
-                    yield chunk
-                await upstream.aclose()
+                try:
+                    async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                except (httpx.HTTPError, httpx.StreamError, httpx.ReadError) as e:
+                    log.warning(f"Upstream read error during range stream for {video_id}: {e}")
+                    # End the stream gracefully — the browser will retry
+                finally:
+                    await upstream.aclose()
 
             return StreamingResponse(
                 range_stream(),
