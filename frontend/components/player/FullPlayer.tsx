@@ -4,6 +4,7 @@ import { useAudioState } from "@/lib/audio-state-context";
 import { useAudioPlayback } from "@/lib/audio-playback-context";
 import { useAudioControls } from "@/lib/audio-controls-context";
 import { useMediaInfo } from "@/hooks/useMediaInfo";
+import { useStreamBitrate } from "@/hooks/useStreamBitrate";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -197,6 +198,7 @@ export function FullPlayer() {
     };
 
     const { title, subtitle, coverUrl, artistLink, mediaLink, hasMedia } = useMediaInfo(100);
+    const { bitrate: streamBitrate } = useStreamBitrate();
 
     // Determine if seeking is allowed
     const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -279,6 +281,12 @@ export function FullPlayer() {
                                 <p className="text-xs text-gray-400 truncate">
                                     {subtitle}
                                 </p>
+                            )}
+                            {/* YouTube Music stream quality badge */}
+                            {currentTrack?.streamSource === "youtube" && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded mt-1 bg-red-500/20 text-red-400">
+                                    YT Music{streamBitrate ? ` · ${streamBitrate} kbps` : ""}
+                                </span>
                             )}
                             {/* Vibe match score when in vibe mode */}
                             {vibeMode && vibeMatchScore !== null && (
