@@ -46,7 +46,7 @@ services:
             # TIDAL sidecar URL
             TIDAL_SIDECAR_URL: http://127.0.0.1:8585 # This is the default value.  Only change if needed
             # YouTube Music streamer sidecar URL
-            YTMUSIC_STREAMER_URL: ${YTMUSIC_STREAMER_URL:-http://ytmusic-streamer:8586
+            YTMUSIC_STREAMER_URL: ${YTMUSIC_STREAMER_URL:-http://ytmusic-streamer:8586}
         volumes:
             - ${MUSIC_PATH:-./music}:/music
             - backend_cache:/app/cache
