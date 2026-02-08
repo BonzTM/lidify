@@ -2064,7 +2064,7 @@ class ApiClient {
         const params = new URLSearchParams();
         if (quality) params.set("quality", quality);
         const token = this.getCurrentToken();
-        if (token) params.set("token", encodeURIComponent(token));
+        if (token) params.set("token", token);
         const qs = params.toString();
         if (qs) url += `?${qs}`;
         return url;

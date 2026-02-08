@@ -11,7 +11,7 @@
  */
 
 import { Router, Request, Response, NextFunction } from "express";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireAuthOrToken } from "../middleware/auth";
 import { ytMusicService } from "../services/youtubeMusic";
 import { getSystemSettings } from "../utils/systemSettings";
 import { logger } from "../utils/logger";
@@ -376,7 +376,7 @@ router.get(
 
 router.get(
     "/stream/:videoId",
-    requireAuth,
+    requireAuthOrToken,
     requireYtMusicEnabled,
     async (req: Request, res: Response) => {
         try {

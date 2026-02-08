@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { useArtistData } from "@/features/artist/hooks/useArtistData";
 import { useArtistActions } from "@/features/artist/hooks/useArtistActions";
 import { useDownloadActions } from "@/features/artist/hooks/useDownloadActions";
+import { useYtMusicTopTracks } from "@/features/artist/hooks/useYtMusicTopTracks";
 import type { Track, Album } from "@/features/artist/types";
 import { useTrackPreview } from "@/hooks/useTrackPreview";
 
@@ -52,6 +53,9 @@ export default function ArtistPage() {
     const { playAll, shufflePlay } = useArtistActions();
     const { downloadArtist, downloadAlbum } = useDownloadActions();
     const { previewTrack, previewPlaying, handlePreview } = useTrackPreview();
+
+    // Enrich unowned top tracks with YT Music streaming
+    const { enrichedTopTracks } = useYtMusicTopTracks(artist);
 
     // Separate owned and available albums
     const ownedAlbums = albums.filter((a) => a.owned);
@@ -98,19 +102,28 @@ export default function ArtistPage() {
 
     // Play track handler (for popular tracks)
     function handlePlayTrack(track: Track) {
-        if (!artist?.topTracks) return;
+        const topTracks = enrichedTopTracks || artist?.topTracks;
+        if (!topTracks) return;
 
-        const playableTracks = artist.topTracks.filter((t: Track) => t.album?.id);
+        // Include owned tracks AND YouTube Music-enriched tracks
+        const playableTracks = topTracks.filter(
+            (t: Track) => t.album?.id || t.streamSource === "youtube"
+        );
         const formattedTracks = playableTracks.map((t: Track) => ({
             id: t.id,
             title: t.title,
-            artist: { name: artist.name, id: artist.id },
+            artist: { name: t.artist?.name || artist!.name, id: t.artist?.id || artist!.id },
             album: {
                 title: t.album?.title || "Unknown",
                 coverArt: t.album?.coverArt,
                 id: t.album?.id,
             },
             duration: t.duration,
+            // Pass through YT Music streaming fields
+            ...(t.streamSource === "youtube" && {
+                streamSource: t.streamSource,
+                youtubeVideoId: t.youtubeVideoId,
+            }),
         }));
 
         const startIndex = formattedTracks.findIndex(
@@ -231,7 +244,7 @@ export default function ArtistPage() {
                     {/* Popular Tracks */}
                     {artist.topTracks && artist.topTracks.length > 0 && (
                         <PopularTracks
-                            tracks={artist.topTracks}
+                            tracks={enrichedTopTracks || artist.topTracks}
                             artist={artist}
                             currentTrackId={currentTrack?.id}
                             colors={colors}
