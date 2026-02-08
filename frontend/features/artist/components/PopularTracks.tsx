@@ -164,7 +164,7 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                         )}
                                     </button>
                                 )}
-                                {track.duration && (
+                                {track.duration > 0 && (
                                     <span className="text-sm text-gray-400 w-10 text-right">
                                         {formatTime(track.duration)}
                                     </span>
