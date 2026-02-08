@@ -1434,10 +1434,22 @@ class ApiClient {
         limit: number = 20,
         signal?: AbortSignal
     ) {
-        return this.request<ApiData>(
-            `/search/discover?q=${encodeURIComponent(
-                query
-            )}&type=${type}&limit=${limit}`,
+        return this.request<{
+            results: ApiData[];
+            aliasInfo: { original: string; canonical: string; mbid?: string } | null;
+        }>(
+            `/search/discover?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}`,
+            { signal }
+        );
+    }
+
+    async discoverSimilarArtists(
+        artist: string,
+        mbid: string = "",
+        signal?: AbortSignal
+    ) {
+        return this.request<{ similarArtists: ApiData[] }>(
+            `/search/discover/similar?artist=${encodeURIComponent(artist)}&mbid=${encodeURIComponent(mbid)}`,
             { signal }
         );
     }
@@ -1650,6 +1662,7 @@ class ApiClient {
                 total: number;
                 completed: number;
                 pending: number;
+                processing: number;
                 failed: number;
                 progress: number;
                 isBackground: boolean;

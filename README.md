@@ -29,6 +29,7 @@ Thanks for your patience while I work through this.
 -   [Quick Start](#quick-start)
 -   [Configuration](#configuration)
 -   [CLAP Audio Analysis](#clap-audio-analysis)
+-   [GPU Acceleration](#gpu-acceleration)
 -   [Integrations](#integrations)
 -   [Kubernetes Deployment](#kubernetes-deployment)
 -   [Using Lidify](#using-lidify)
@@ -211,6 +212,18 @@ docker run -d \
 
 That's it! Open http://localhost:3030 and create your account.
 
+**With GPU acceleration** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
+
+```bash
+docker run -d \
+  --name lidify \
+  --gpus all \
+  -p 3030:3030 \
+  -v /path/to/your/music:/music \
+  -v lidify_data:/data \
+  chevron7locked/lidify:latest
+```
+
 ### What's Included
 
 The Lidify container includes everything you need:
@@ -336,6 +349,9 @@ The unified Lidify container handles most configuration automatically. Here are 
 | `LIDIFY_CALLBACK_URL`               | `http://host.docker.internal:3030` | URL for Lidarr webhook callbacks (see [Lidarr integration](#lidarr))        |
 | `AUDIO_ANALYSIS_WORKERS`            | `2`                                | Number of parallel workers for audio analysis (1-8)                         |
 | `AUDIO_ANALYSIS_THREADS_PER_WORKER` | `1`                                | Threads per worker for TensorFlow/FFT operations (1-4)                      |
+| `AUDIO_ANALYSIS_BATCH_SIZE`         | `10`                               | Tracks per analysis batch                                                   |
+| `AUDIO_BRPOP_TIMEOUT`              | `30`                               | Redis blocking wait timeout in seconds (also controls DB reconciliation)     |
+| `AUDIO_MODEL_IDLE_TIMEOUT`         | `300`                              | Seconds before unloading idle ML models to free memory (0 = never unload)    |
 | `LOG_LEVEL`                         | `warn` (prod) / `debug` (dev)      | Logging verbosity: debug, info, warn, error, silent                         |
 | `DOCS_PUBLIC`                       | `false`                            | Set to `true` to allow public access to API docs in production              |
 
@@ -455,6 +471,78 @@ The vibe button uses CLAP embeddings for finding similar tracks. Text-based vibe
 | `/api/vibe/similar/:trackId`   | GET    | Get tracks similar to the given track      |
 | `/api/vibe/search`             | POST   | Search tracks by text description          |
 | `/api/vibe/status`             | GET    | Get embedding progress                     |
+
+---
+
+## GPU Acceleration
+
+GPU acceleration speeds up audio analysis (mood detection, BPM extraction, vibe embeddings). It is **optional** -- everything works on CPU, just slower.
+
+### Requirements
+
+-   NVIDIA GPU with CUDA support
+-   NVIDIA drivers installed on the host (`nvidia-smi` should work)
+-   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) -- bridges Docker to your GPU
+
+### Install NVIDIA Container Toolkit
+
+The toolkit is required for any Docker container to access the GPU. Install it once:
+
+**Fedora / Nobara / RHEL:**
+```bash
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo && sudo dnf install -y nvidia-container-toolkit && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+```
+
+**Ubuntu / Debian:**
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+```
+
+### Verify Host Setup
+
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check container toolkit
+nvidia-container-runtime --version
+```
+
+### Enable GPU
+
+**All-in-One container:**
+```bash
+docker run -d --gpus all -p 3030:3030 -v /path/to/music:/music -v lidify_data:/data chevron7locked/lidify:latest
+```
+
+**Docker Compose:**
+
+Uncomment the `devices` block under `audio-analyzer` (and optionally `audio-analyzer-clap`) in `docker-compose.yml`:
+
+```yaml
+reservations:
+    memory: 2G
+    devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+```
+
+Then restart: `docker compose up -d`
+
+### Verify GPU Detection
+
+```bash
+# MusiCNN analyzer
+docker logs lidify_audio_analyzer 2>&1 | grep -i gpu
+
+# CLAP analyzer
+docker logs lidify_audio_analyzer_clap 2>&1 | grep -i gpu
+```
+
+Expected: `TensorFlow GPU detected: ...` or `CUDA available: True`
+
+If you see `TensorFlow running on CPU`, GPU passthrough is not active.
 
 ---
 

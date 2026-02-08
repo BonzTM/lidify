@@ -688,6 +688,7 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
                                                 completed={enrichmentProgress.clapEmbeddings.completed}
                                                 total={enrichmentProgress.clapEmbeddings.total}
                                                 progress={enrichmentProgress.clapEmbeddings.progress}
+                                                processing={enrichmentProgress.clapEmbeddings.processing}
                                                 failed={enrichmentProgress.clapEmbeddings.failed}
                                                 isBackground={true}
                                             />

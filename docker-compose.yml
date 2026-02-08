@@ -274,6 +274,10 @@ services:
             MUSIC_PATH: /music
             BATCH_SIZE: ${AUDIO_ANALYSIS_BATCH_SIZE:-10}
             SLEEP_INTERVAL: ${AUDIO_ANALYSIS_INTERVAL:-5}
+            # BRPOP timeout for blocking wait (seconds). Also controls DB reconciliation interval.
+            BRPOP_TIMEOUT: ${AUDIO_BRPOP_TIMEOUT:-30}
+            # Idle timeout before unloading ML models to free memory (seconds)
+            MODEL_IDLE_TIMEOUT: ${AUDIO_MODEL_IDLE_TIMEOUT:-300}
             # Default workers reduced from 8 to 2 for stability (Issue #26 fix)
             # Each worker requires 1-1.5GB RAM normally, up to 2-3GB peak
             NUM_WORKERS: ${AUDIO_ANALYSIS_WORKERS:-2}
@@ -300,6 +304,13 @@ services:
                     cpus: "4"
                 reservations:
                     memory: 2G
+                    # GPU acceleration (optional) - uncomment to enable
+                    # Requires NVIDIA Container Toolkit on the host:
+                    #   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+                    # devices:
+                    #     - driver: nvidia
+                    #       count: 1
+                    #       capabilities: [gpu]
         healthcheck:
             test: ["CMD", "pgrep", "-f", "python.*analyzer"]
             interval: 30s
@@ -320,6 +331,7 @@ services:
             SLEEP_INTERVAL: ${CLAP_SLEEP_INTERVAL:-5}
             NUM_WORKERS: ${CLAP_WORKERS:-2}
             THREADS_PER_WORKER: ${CLAP_THREADS_PER_WORKER:-1}
+            MODEL_IDLE_TIMEOUT: ${CLAP_MODEL_IDLE_TIMEOUT:-300}
             INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-lidify-internal-secret-change-me}
         volumes:
             - ${MUSIC_PATH:-./music}:/music:ro
@@ -342,6 +354,11 @@ services:
                     cpus: "4"
                 reservations:
                     memory: 1G
+                    # GPU acceleration (optional) - uncomment to enable
+                    # devices:
+                    #     - driver: nvidia
+                    #       count: 1
+                    #       capabilities: [gpu]
 
     # YouTube Music Streamer - Streams audio from YouTube Music subscription
     ytmusic-streamer:
