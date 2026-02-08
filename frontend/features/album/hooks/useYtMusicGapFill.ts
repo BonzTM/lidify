@@ -156,6 +156,8 @@ export function useYtMusicGapFill(
                     ...track,
                     streamSource: "youtube" as const,
                     youtubeVideoId: match.videoId,
+                    // Use YT Music duration if the track doesn't have one
+                    duration: track.duration || match.duration,
                 };
             }
             return track;
