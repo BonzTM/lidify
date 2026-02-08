@@ -739,6 +739,21 @@ async def library_albums(user_id: str = Query(...), limit: int = 100, order: str
 @app.on_event("startup")
 async def startup():
     log.info("YouTube Music Streamer starting up (multi-user mode)")
+
+    # Ensure data directory exists and is writable
+    DATA_PATH.mkdir(parents=True, exist_ok=True)
+    test_file = DATA_PATH / ".write_test"
+    try:
+        test_file.write_text("ok")
+        test_file.unlink()
+    except PermissionError:
+        log.error(
+            f"DATA_PATH ({DATA_PATH}) is not writable! "
+            "OAuth credentials cannot be saved. "
+            "If using Docker, try removing and recreating the ytmusic_data volume: "
+            "docker volume rm lidify_ytmusic_data"
+        )
+
     oauth_files = list(DATA_PATH.glob("oauth_*.json"))
     if oauth_files:
         log.info(f"Found {len(oauth_files)} user OAuth credential file(s)")
