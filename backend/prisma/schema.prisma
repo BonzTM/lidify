@@ -108,8 +108,10 @@ model SystemSettings {
   clapWorkers                 Int      @default(2)
   lastfmApiKey                String?
   soulseekConcurrentDownloads Int      @default(4)
-  // YouTube Music streaming — admin toggle only (per-user credentials are on UserSettings)
+  // YouTube Music streaming — admin toggle + OAuth app credentials
   ytMusicEnabled              Boolean  @default(false)
+  ytMusicClientId             String?  // Google OAuth client ID (TVs and Limited Input devices)
+  ytMusicClientSecret         String?  // Google OAuth client secret
 }
 
 model Artist {

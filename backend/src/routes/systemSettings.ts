@@ -76,8 +76,10 @@ const systemSettingsSchema = z.object({
     downloadSource: z.enum(["soulseek", "lidarr"]).optional(),
     primaryFailureFallback: z.enum(["none", "lidarr", "soulseek"]).optional(),
 
-    // YouTube Music streaming (admin toggle only; OAuth & quality are per-user)
+    // YouTube Music streaming
     ytMusicEnabled: z.boolean().optional(),
+    ytMusicClientId: z.string().nullable().optional(),
+    ytMusicClientSecret: z.string().nullable().optional(),
 });
 
 // GET /system-settings
@@ -122,6 +124,7 @@ router.get("/", async (req, res) => {
             audiobookshelfApiKey: safeDecrypt(settings.audiobookshelfApiKey),
             soulseekPassword: safeDecrypt(settings.soulseekPassword),
             spotifyClientSecret: safeDecrypt(settings.spotifyClientSecret),
+            ytMusicClientSecret: safeDecrypt(settings.ytMusicClientSecret),
         };
 
         res.json(decryptedSettings);
@@ -166,6 +169,10 @@ router.post("/", async (req, res) => {
         if (data.spotifyClientSecret)
             encryptedData.spotifyClientSecret = encrypt(
                 data.spotifyClientSecret
+            );
+        if (data.ytMusicClientSecret)
+            encryptedData.ytMusicClientSecret = encrypt(
+                data.ytMusicClientSecret
             );
 
         const settings = await prisma.systemSettings.upsert({

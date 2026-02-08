@@ -50,8 +50,10 @@ export interface SystemSettings {
     // Download Preferences
     downloadSource: "soulseek" | "lidarr";
     primaryFailureFallback: "none" | "lidarr" | "soulseek";
-    // YouTube Music streaming (admin toggle only)
+    // YouTube Music streaming (admin toggle + OAuth app credentials)
     ytMusicEnabled: boolean;
+    ytMusicClientId: string;
+    ytMusicClientSecret: string;
 }
 
 export interface ApiKey {

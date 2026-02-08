@@ -1954,8 +1954,26 @@ class ApiClient {
         enabled: boolean;
         available: boolean;
         authenticated: boolean;
+        credentialsConfigured: boolean;
     }> {
         return this.request(`/ytmusic/status`);
+    }
+
+    async initiateYtMusicAuth(): Promise<{
+        device_code: string;
+        user_code: string;
+        verification_url: string;
+        expires_in: number;
+        interval: number;
+    }> {
+        return this.post(`/ytmusic/auth/device-code`);
+    }
+
+    async pollYtMusicAuth(deviceCode: string): Promise<{
+        status: "pending" | "success" | "error";
+        error?: string;
+    }> {
+        return this.post(`/ytmusic/auth/device-code/poll`, { deviceCode });
     }
 
     async saveYtMusicOAuthToken(oauthJson: string): Promise<{ success: boolean }> {
