@@ -43,6 +43,8 @@ services:
             LIDIFY_CALLBACK_URL: ${LIDIFY_CALLBACK_URL:-http://backend:3006}
             # Debug: enable extra podcast stream/cache logging
             PODCAST_DEBUG: ${PODCAST_DEBUG:-0}
+            # YouTube Music streamer sidecar URL
+            YTMUSIC_STREAMER_URL: http://ytmusic-streamer:8586
         volumes:
             - ${MUSIC_PATH:-./music}:/music
             - backend_cache:/app/cache
@@ -323,11 +325,35 @@ services:
                     #       count: 1
                     #       capabilities: [gpu]
 
+    # YouTube Music Streamer - Streams audio from YouTube Music subscription
+    ytmusic-streamer:
+        build:
+            context: ./services/ytmusic-streamer
+        container_name: lidify_ytmusic_streamer
+        environment:
+            DATA_PATH: /data
+            DEBUG: ${YTMUSIC_DEBUG:-}
+        volumes:
+            - ytmusic_data:/data
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8586/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 10s
+        deploy:
+            resources:
+                limits:
+                    memory: 512M
+                    cpus: "1"
+
 volumes:
     # Lidify core
     postgres_data:
     backend_cache:
     backend_logs:
+    ytmusic_data:
     # External services
     lidarr_config:
     prowlarr_config:

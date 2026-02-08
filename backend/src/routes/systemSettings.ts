@@ -75,6 +75,9 @@ const systemSettingsSchema = z.object({
     // Download Preferences
     downloadSource: z.enum(["soulseek", "lidarr"]).optional(),
     primaryFailureFallback: z.enum(["none", "lidarr", "soulseek"]).optional(),
+
+    // YouTube Music streaming (admin toggle only; OAuth & quality are per-user)
+    ytMusicEnabled: z.boolean().optional(),
 });
 
 // GET /system-settings

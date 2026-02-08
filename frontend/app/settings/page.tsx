@@ -24,15 +24,18 @@ import { AIServicesSection } from "@/features/settings/components/sections/AISer
 import { StoragePathsSection } from "@/features/settings/components/sections/StoragePathsSection";
 import { CacheSection } from "@/features/settings/components/sections/CacheSection";
 import { UserManagementSection } from "@/features/settings/components/sections/UserManagementSection";
+import { YouTubeMusicSection, YouTubeMusicAdminSection } from "@/features/settings/components/sections/YouTubeMusicSection";
 
 // Define sidebar items
 const sidebarItems: SidebarItem[] = [
     { id: "account", label: "Account" },
     { id: "playback", label: "Playback" },
+    { id: "youtube-music", label: "YouTube Music" },
     { id: "download-preferences", label: "Download Preferences", adminOnly: true },
     { id: "lidarr", label: "Download Services", adminOnly: true },
     { id: "audiobookshelf", label: "Media Servers", adminOnly: true },
     { id: "soulseek", label: "P2P Networks", adminOnly: true },
+    { id: "youtube-music-admin", label: "YouTube Music (Admin)", adminOnly: true },
     { id: "ai-services", label: "Artwork", adminOnly: true },
     { id: "storage", label: "Storage", adminOnly: true },
     { id: "cache", label: "Cache & Automation", adminOnly: true },
@@ -149,6 +152,12 @@ export default function SettingsPage() {
                     onChange={(quality) => updateUserSettings({ playbackQuality: quality })}
                 />
 
+                {/* YouTube Music (per-user — visible to all users) */}
+                <YouTubeMusicSection
+                    settings={userSettings}
+                    onUpdate={updateUserSettings}
+                />
+
                 {/* Admin-only sections */}
                 {isAdmin && (
                     <>
@@ -180,6 +189,12 @@ export default function SettingsPage() {
                             onUpdate={updateSystemSettings}
                             onTest={handleTestService}
                             isTesting={testingServices.slskd || false}
+                        />
+
+                        {/* YouTube Music Admin Toggle */}
+                        <YouTubeMusicAdminSection
+                            settings={systemSettings}
+                            onUpdate={updateSystemSettings}
                         />
 
                         {/* AI Services */}

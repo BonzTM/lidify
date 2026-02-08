@@ -10,6 +10,9 @@ export interface UserSettings {
     wifiOnly: boolean;
     offlineEnabled: boolean;
     maxCacheSizeMb: number;
+    // YouTube Music (per-user)
+    ytMusicOAuthJson?: string;
+    ytMusicQuality: "LOW" | "MEDIUM" | "HIGH" | "LOSSLESS";
 }
 
 export interface SystemSettings {
@@ -47,6 +50,8 @@ export interface SystemSettings {
     // Download Preferences
     downloadSource: "soulseek" | "lidarr";
     primaryFailureFallback: "none" | "lidarr" | "soulseek";
+    // YouTube Music streaming (admin toggle only)
+    ytMusicEnabled: boolean;
 }
 
 export interface ApiKey {
