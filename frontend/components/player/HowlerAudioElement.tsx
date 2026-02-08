@@ -442,6 +442,14 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                 return;
             }
 
+            // Skip if the track is still loading — the load-complete handler
+            // will start playback.  Without this guard, a second play click
+            // during loading can race with the load callback and produce
+            // overlapping audio streams.
+            if (isLoadingRef.current) {
+                return;
+            }
+
             const shouldPlay = lastPlayingStateRef.current || isPlaying;
             const isCurrentlyPlaying = howlerEngine.isPlaying();
 
