@@ -64,6 +64,7 @@ export interface Track {
     // YouTube Music streaming fields
     streamSource?: "local" | "youtube";
     youtubeVideoId?: string;
+    streamBitrate?: number;
     // Audio features for vibe mode visualization
     audioFeatures?: {
         bpm?: number | null;

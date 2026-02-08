@@ -2041,6 +2041,27 @@ class ApiClient {
         if (qs) url += `?${qs}`;
         return url;
     }
+
+    /**
+     * Fetch stream metadata (bitrate, codec, etc.) for a YouTube Music
+     * video. Used by the player UI to display quality information.
+     */
+    async getYtMusicStreamInfo(
+        videoId: string,
+        quality?: string
+    ): Promise<{
+        videoId: string;
+        abr: number;
+        acodec: string;
+        duration: number;
+        content_type: string;
+    }> {
+        const params = new URLSearchParams();
+        if (quality) params.set("quality", quality);
+        const qs = params.toString();
+        const suffix = qs ? `?${qs}` : "";
+        return this.get(`/ytmusic/stream-info/${videoId}${suffix}`);
+    }
 }
 
 // Create a singleton instance without passing baseUrl - it will be determined dynamically

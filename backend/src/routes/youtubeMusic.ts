@@ -369,6 +369,49 @@ router.get(
     }
 );
 
+// ── Stream Info ────────────────────────────────────────────────────
+// Returns metadata about a YT Music stream (bitrate, codec, etc.)
+// without proxying the actual audio bytes. Used by the player UI
+// to display quality information.
+
+router.get(
+    "/stream-info/:videoId",
+    requireAuthOrToken,
+    requireYtMusicEnabled,
+    async (req: Request, res: Response) => {
+        try {
+            const userId = req.user!.id;
+            await ensureUserOAuth(userId);
+
+            const { videoId } = req.params;
+            const quality =
+                (req.query.quality as string) || undefined;
+
+            const info = await ytMusicService.getStreamInfo(
+                userId,
+                videoId,
+                quality
+            );
+
+            res.json({
+                videoId: info.videoId,
+                abr: info.abr,
+                acodec: info.acodec,
+                duration: info.duration,
+                content_type: info.content_type,
+            });
+        } catch (err: any) {
+            if (err.response?.status === 404) {
+                return res.status(404).json({ error: "Stream not found" });
+            }
+            logger.error("[YTMusic Route] Stream info failed:", err);
+            res.status(500).json({
+                error: "Failed to get stream info",
+            });
+        }
+    }
+);
+
 // ── Stream Proxy ───────────────────────────────────────────────────
 // This is the critical endpoint: the frontend requests audio from here,
 // and we pipe it from the sidecar. This avoids exposing IP-locked
