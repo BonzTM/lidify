@@ -2014,6 +2014,19 @@ class ApiClient {
     }
 
     /**
+     * Batch-match multiple tracks against YouTube Music in a single request.
+     * Far faster than calling matchYtMusicTrack() N times because the
+     * sidecar runs all searches concurrently via asyncio.gather.
+     */
+    async matchYtMusicBatch(
+        tracks: Array<{ artist: string; title: string; albumTitle?: string }>
+    ): Promise<{
+        matches: Array<{ videoId: string; title: string; duration: number } | null>;
+    }> {
+        return this.post(`/ytmusic/match-batch`, { tracks });
+    }
+
+    /**
      * Build a stream URL for YouTube Music playback.
      * Like getStreamUrl(), this returns a synchronous URL string
      * that the audio engine can load directly.

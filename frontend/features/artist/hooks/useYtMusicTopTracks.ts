@@ -4,7 +4,7 @@
  *
  * This is the artist-page counterpart of album/useYtMusicGapFill.
  * It uses the same global status cache so we don't re-check on every
- * page navigation, and batches matching requests for performance.
+ * page navigation, and a single batch match request for performance.
  */
 
 import { useEffect, useState, useRef, useMemo } from "react";
@@ -44,6 +44,9 @@ async function getYtMusicAvailable(): Promise<boolean> {
     }
 }
 
+// ── Global match cache for artist top tracks ──────────────────────
+const _artistMatchCache = new Map<string, Record<string, YtMusicMatch>>();
+
 export function useYtMusicTopTracks(artist: Artist | null | undefined) {
     const [matches, setMatches] = useState<Record<string, YtMusicMatch>>({});
     const [loading, setLoading] = useState(false);
@@ -75,52 +78,52 @@ export function useYtMusicTopTracks(artist: Artist | null | undefined) {
         );
     }, [artist?.topTracks, artist?.id, ytMusicAvailable]);
 
-    // Match unowned tracks against YTMusic
+    // Match unowned tracks against YTMusic (single batch call)
     useEffect(() => {
         if (!unownedTracks.length || !artist?.id) return;
         if (matchedArtistIdRef.current === artist.id) return;
+
+        // Check global cache first — instant on revisit
+        const cached = _artistMatchCache.get(artist.id);
+        if (cached) {
+            matchedArtistIdRef.current = artist.id;
+            setMatches(cached);
+            return;
+        }
 
         let cancelled = false;
         matchedArtistIdRef.current = artist.id;
         setLoading(true);
 
         const matchTracks = async () => {
-            const newMatches: Record<string, YtMusicMatch> = {};
-            const BATCH_SIZE = 10;
+            const trackPayload = unownedTracks.map((track) => ({
+                artist: track.artist?.name || artist?.name || "",
+                title: track.title,
+                // No album title for top-tracks
+            }));
 
-            for (let i = 0; i < unownedTracks.length; i += BATCH_SIZE) {
-                if (cancelled) break;
-                const batch = unownedTracks.slice(i, i + BATCH_SIZE);
-                const results = await Promise.allSettled(
-                    batch.map((track) =>
-                        api.matchYtMusicTrack(
-                            track.artist?.name || artist?.name || "",
-                            track.title
-                            // No album title for top-tracks
-                        )
-                    )
-                );
+            try {
+                const { matches: batchMatches } = await api.matchYtMusicBatch(trackPayload);
 
-                results.forEach((result, idx) => {
-                    if (
-                        result.status === "fulfilled" &&
-                        result.value.match
-                    ) {
-                        newMatches[batch[idx].id] = result.value.match;
+                if (cancelled) return;
+
+                const newMatches: Record<string, YtMusicMatch> = {};
+                batchMatches.forEach((match, idx) => {
+                    if (match && unownedTracks[idx]) {
+                        newMatches[unownedTracks[idx].id] = match;
                     }
                 });
+
+                _artistMatchCache.set(artist.id, newMatches);
+                setMatches(newMatches);
+            } catch (err) {
+                console.error("[YTMusic TopTracks] Batch match failed:", err);
             }
 
-            if (!cancelled) {
-                setMatches(newMatches);
-                setLoading(false);
-            }
+            if (!cancelled) setLoading(false);
         };
 
-        matchTracks().catch((err) => {
-            console.error("[YTMusic TopTracks] Matching failed:", err);
-            if (!cancelled) setLoading(false);
-        });
+        matchTracks();
 
         return () => {
             cancelled = true;
