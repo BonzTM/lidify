@@ -886,8 +886,13 @@ async def proxy_stream(
             }
             if "content-range" in upstream.headers:
                 response_headers["Content-Range"] = upstream.headers["content-range"]
-            if "content-length" in upstream.headers:
-                response_headers["Content-Length"] = upstream.headers["content-length"]
+            # NOTE: We intentionally do NOT forward Content-Length here.
+            # If the upstream drops mid-stream (ReadError), h11 enforces the
+            # declared length and raises "Too little data for declared
+            # Content-Length", crashing the ASGI app.  By omitting it,
+            # Starlette uses chunked transfer encoding, which allows the
+            # stream to end cleanly on error and lets the browser retry
+            # with a new Range request.
 
             async def range_stream():
                 try:
