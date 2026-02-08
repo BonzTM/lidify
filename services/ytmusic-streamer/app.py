@@ -338,6 +338,14 @@ async def auth_device_code_poll(req: DeviceCodePollRequest, user_id: str = Query
     Returns the OAuth token JSON when the user completes authorization,
     or a pending status if still waiting.
     """
+    # User-friendly error descriptions
+    ERROR_MESSAGES = {
+        "invalid_grant": "The sign-in code has expired or was already used. Please start over.",
+        "expired_token": "The sign-in code has expired. Please start over.",
+        "access_denied": "Access was denied. Please try again and click 'Allow' on the Google page.",
+        "invalid_client": "OAuth client credentials are invalid. Please ask your admin to check the Client ID and Secret.",
+    }
+
     try:
         oauth_creds = OAuthCredentials(
             client_id=req.client_id,
@@ -351,8 +359,9 @@ async def auth_device_code_poll(req: DeviceCodePollRequest, user_id: str = Query
             if error in ("authorization_pending", "slow_down"):
                 return {"status": "pending", "error": error}
             else:
+                friendly = ERROR_MESSAGES.get(error, f"Authorization failed ({error}). Please try again.")
                 log.error(f"Device code poll error: {error}")
-                return {"status": "error", "error": error}
+                return {"status": "error", "error": friendly}
 
         # Success — we have a token. Save it for this user.
         DATA_PATH.mkdir(parents=True, exist_ok=True)
@@ -374,14 +383,21 @@ async def auth_device_code_poll(req: DeviceCodePollRequest, user_id: str = Query
             "oauth_json": token_json,
         }
     except Exception as e:
-        error_str = str(e)
+        error_str = str(e).lower()
         # ytmusicapi raises exceptions for pending states too
-        if "authorization_pending" in error_str.lower():
+        if "authorization_pending" in error_str:
             return {"status": "pending", "error": "authorization_pending"}
+
+        # Check for known error types in exception messages
+        for error_key, friendly_msg in ERROR_MESSAGES.items():
+            if error_key in error_str:
+                log.warning(f"Device code poll error for user {user_id}: {error_key}")
+                return {"status": "error", "error": friendly_msg}
+
         log.error(f"Device code poll failed for user {user_id}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to poll device code: {error_str}",
+            detail=f"Failed to poll device code: {str(e)}",
         )
 
 
