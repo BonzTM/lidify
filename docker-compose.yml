@@ -43,6 +43,8 @@ services:
             LIDIFY_CALLBACK_URL: ${LIDIFY_CALLBACK_URL:-http://backend:3006}
             # Debug: enable extra podcast stream/cache logging
             PODCAST_DEBUG: ${PODCAST_DEBUG:-0}
+            # TIDAL sidecar URL
+            TIDAL_SIDECAR_URL: http://127.0.0.1:8585 # This is the default value.  Only change if needed
         volumes:
             - ${MUSIC_PATH:-./music}:/music
             - backend_cache:/app/cache
@@ -188,6 +190,39 @@ services:
     # NOTE: Soulseek is now handled directly by the backend using slsk-client
     # No Docker container needed - downloads go straight to Singles/Artist/Album/
 
+    # TIDAL Downloader - Python sidecar using tiddl for TIDAL downloads
+    # K8s note: /music should be RWX (ReadWriteMany) if multiple pods share it;
+    # tidal_data can be RWO (ReadWriteOnce).
+    tidal-downloader:
+        build:
+            context: ./services/tidal-downloader
+        container_name: lidify_tidal_downloader
+        environment:
+            - TIDDL_PATH=/data/.tiddl
+            - MUSIC_PATH=/music
+            # Seconds to wait between each track download to avoid TIDAL rate limits (default: 3)
+            - TIDAL_TRACK_DELAY=${TIDAL_TRACK_DELAY:-3}
+        volumes:
+            - ${MUSIC_PATH:-./music}:/music
+            - tidal_data:/data
+        depends_on:
+            backend:
+                condition: service_healthy
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8585/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 15s
+        deploy:
+            resources:
+                limits:
+                    memory: 512M
+                    cpus: "2"
+                reservations:
+                    memory: 128M
+
     # qBittorrent - Torrent client
     qbittorrent:
         image: lscr.io/linuxserver/qbittorrent:latest
@@ -237,10 +272,6 @@ services:
             MUSIC_PATH: /music
             BATCH_SIZE: ${AUDIO_ANALYSIS_BATCH_SIZE:-10}
             SLEEP_INTERVAL: ${AUDIO_ANALYSIS_INTERVAL:-5}
-            # BRPOP timeout for blocking wait (seconds). Also controls DB reconciliation interval.
-            BRPOP_TIMEOUT: ${AUDIO_BRPOP_TIMEOUT:-30}
-            # Idle timeout before unloading ML models to free memory (seconds)
-            MODEL_IDLE_TIMEOUT: ${AUDIO_MODEL_IDLE_TIMEOUT:-300}
             # Default workers reduced from 8 to 2 for stability (Issue #26 fix)
             # Each worker requires 1-1.5GB RAM normally, up to 2-3GB peak
             NUM_WORKERS: ${AUDIO_ANALYSIS_WORKERS:-2}
@@ -267,13 +298,6 @@ services:
                     cpus: "4"
                 reservations:
                     memory: 2G
-                    # GPU acceleration (optional) - uncomment to enable
-                    # Requires NVIDIA Container Toolkit on the host:
-                    #   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
-                    # devices:
-                    #     - driver: nvidia
-                    #       count: 1
-                    #       capabilities: [gpu]
         healthcheck:
             test: ["CMD", "pgrep", "-f", "python.*analyzer"]
             interval: 30s
@@ -294,7 +318,6 @@ services:
             SLEEP_INTERVAL: ${CLAP_SLEEP_INTERVAL:-5}
             NUM_WORKERS: ${CLAP_WORKERS:-2}
             THREADS_PER_WORKER: ${CLAP_THREADS_PER_WORKER:-1}
-            MODEL_IDLE_TIMEOUT: ${CLAP_MODEL_IDLE_TIMEOUT:-300}
             INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-lidify-internal-secret-change-me}
         volumes:
             - ${MUSIC_PATH:-./music}:/music:ro
@@ -317,11 +340,6 @@ services:
                     cpus: "4"
                 reservations:
                     memory: 1G
-                    # GPU acceleration (optional) - uncomment to enable
-                    # devices:
-                    #     - driver: nvidia
-                    #       count: 1
-                    #       capabilities: [gpu]
 
 volumes:
     # Lidify core
@@ -333,6 +351,7 @@ volumes:
     prowlarr_config:
     qbittorrent_config:
     sabnzbd_config:
+    tidal_data:
 
 networks:
     default:

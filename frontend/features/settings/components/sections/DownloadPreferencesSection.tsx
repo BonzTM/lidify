@@ -22,22 +22,39 @@ export function DownloadPreferencesSection({
         settings.soulseekUsername.trim() !== "" &&
         settings.soulseekPassword.trim() !== "";
 
-    const areBothServicesConfigured = isLidarrConfigured && isSoulseekConfigured;
-    const isDisabled = !areBothServicesConfigured;
+    const isTidalConfigured =
+        settings.tidalEnabled === true &&
+        !!settings.tidalUserId;
+
+    const configuredCount = [isLidarrConfigured, isSoulseekConfigured, isTidalConfigured].filter(Boolean).length;
+    const areMultipleServicesConfigured = configuredCount >= 2;
+    const isDisabled = !areMultipleServicesConfigured;
+
+    // Build primary source options based on what's configured
+    const getSourceOptions = () => {
+        const options = [];
+        if (isSoulseekConfigured) options.push({ value: "soulseek", label: "Soulseek (Per-track)" });
+        if (isLidarrConfigured) options.push({ value: "lidarr", label: "Lidarr (Full albums)" });
+        if (isTidalConfigured) options.push({ value: "tidal", label: "TIDAL (Per-track / album)" });
+        if (options.length === 0) {
+            options.push({ value: "soulseek", label: "Soulseek (Per-track)" });
+        }
+        return options;
+    };
 
     // Dynamic fallback options based on primary source
     const getFallbackOptions = () => {
-        if (settings.downloadSource === "soulseek") {
-            return [
-                { value: "none", label: "Skip track" },
-                { value: "lidarr", label: "Download full album via Lidarr" },
-            ];
-        } else {
-            return [
-                { value: "none", label: "Skip album" },
-                { value: "soulseek", label: "Try Soulseek for individual tracks" },
-            ];
+        const options = [{ value: "none", label: "Skip" }];
+        if (settings.downloadSource !== "soulseek" && isSoulseekConfigured) {
+            options.push({ value: "soulseek", label: "Try Soulseek" });
         }
+        if (settings.downloadSource !== "lidarr" && isLidarrConfigured) {
+            options.push({ value: "lidarr", label: "Try Lidarr" });
+        }
+        if (settings.downloadSource !== "tidal" && isTidalConfigured) {
+            options.push({ value: "tidal", label: "Try TIDAL" });
+        }
+        return options;
     };
 
     return (
@@ -50,7 +67,7 @@ export function DownloadPreferencesSection({
                 label="Primary Download Source"
                 description={
                     isDisabled
-                        ? "Requires both Soulseek and Lidarr to be configured"
+                        ? "Requires at least 2 download services to be configured"
                         : "Choose how to download music for imported playlists"
                 }
             >
@@ -58,37 +75,28 @@ export function DownloadPreferencesSection({
                     value={settings.downloadSource || "soulseek"}
                     onChange={(v) =>
                         onUpdate({
-                            downloadSource: v as "soulseek" | "lidarr",
+                            downloadSource: v as "soulseek" | "lidarr" | "tidal",
                             primaryFailureFallback: "none"
                         })
                     }
-                    options={[
-                        { value: "soulseek", label: "Soulseek (Per-track)" },
-                        { value: "lidarr", label: "Lidarr (Full albums)" },
-                    ]}
+                    options={getSourceOptions()}
                     disabled={isDisabled}
                 />
             </SettingsRow>
 
             <SettingsRow
-                label={
-                    settings.downloadSource === "soulseek"
-                        ? "When Soulseek Fails"
-                        : "When Lidarr Fails"
-                }
+                label="When Primary Source Fails"
                 description={
                     isDisabled
-                        ? "Requires both Soulseek and Lidarr to be configured"
-                        : settings.downloadSource === "soulseek"
-                        ? "What to do if a track can't be found on Soulseek"
-                        : "What to do if an album can't be found on Lidarr"
+                        ? "Requires at least 2 download services to be configured"
+                        : "What to do if a download fails with the primary source"
                 }
             >
                 <SettingsSelect
                     value={settings.primaryFailureFallback || "none"}
                     onChange={(v) =>
                         onUpdate({
-                            primaryFailureFallback: v as "none" | "lidarr" | "soulseek",
+                            primaryFailureFallback: v as "none" | "lidarr" | "soulseek" | "tidal",
                         })
                     }
                     options={getFallbackOptions()}

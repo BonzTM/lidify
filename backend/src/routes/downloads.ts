@@ -5,6 +5,8 @@ import { prisma } from "../utils/db";
 import { config } from "../config";
 import { getSystemSettings } from "../utils/systemSettings";
 import { lidarrService } from "../services/lidarr";
+import { soulseekService } from "../services/soulseek";
+import { tidalService } from "../services/tidal";
 import { musicBrainzService } from "../services/musicbrainz";
 import { lastFmService } from "../services/lastfm";
 import { simpleDownloadManager } from "../services/simpleDownloadManager";
@@ -13,6 +15,31 @@ import crypto from "crypto";
 const router = Router();
 
 router.use(requireAuthOrToken);
+
+/**
+ * GET /downloads/availability
+ * Check whether any download service (Lidarr or Soulseek) is configured and enabled.
+ * Non-admin endpoint — any authenticated user can check.
+ */
+router.get("/availability", async (req, res) => {
+    try {
+        const [lidarrEnabled, soulseekAvailable, tidalAvailable] = await Promise.all([
+            lidarrService.isEnabled(),
+            soulseekService.isAvailable(),
+            tidalService.isAvailable(),
+        ]);
+
+        res.json({
+            enabled: lidarrEnabled || soulseekAvailable || tidalAvailable,
+            lidarr: lidarrEnabled,
+            soulseek: soulseekAvailable,
+            tidal: tidalAvailable,
+        });
+    } catch (error: any) {
+        logger.error("Download availability check error:", error.message);
+        res.status(500).json({ error: "Failed to check download availability" });
+    }
+});
 
 /**
  * Verify and potentially correct artist name before download
@@ -117,16 +144,20 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Check if Lidarr is enabled (database or .env)
-        const lidarrEnabled = await lidarrService.isEnabled();
-        if (!lidarrEnabled) {
+        // Check if at least one download service is available
+        const settings = await getSystemSettings();
+        const [lidarrEnabled, tidalAvailable] = await Promise.all([
+            lidarrService.isEnabled(),
+            tidalService.isAvailable(),
+        ]);
+
+        if (!lidarrEnabled && !tidalAvailable) {
             return res.status(400).json({
-                error: "Lidarr not configured. Please add albums manually to your library.",
+                error: "No download service configured. Please set up Lidarr or TIDAL.",
             });
         }
 
         // Determine root folder path based on download type
-        const settings = await getSystemSettings();
         const baseMusicPath = settings?.musicPath || config.music.musicPath;
         const rootFolderPath =
             downloadType === "discovery"
@@ -518,7 +549,6 @@ async function processDownload(
     }
 
     if (type === "album") {
-        // For albums, use the simple download manager
         let parsedArtist = artistName;
         let parsedAlbum = albumTitle;
 
@@ -535,18 +565,184 @@ async function processDownload(
 
         logger.debug(`Parsed: Artist="${parsedArtist}", Album="${parsedAlbum}"`);
 
-        // Use simple download manager for album downloads
-        const result = await simpleDownloadManager.startDownload(
-            jobId,
-            parsedArtist,
-            parsedAlbum,
-            mbid,
-            job.userId
+        // Check configured download source
+        const settings = await getSystemSettings();
+        const downloadSource = settings?.downloadSource || "soulseek";
+
+        if (downloadSource === "tidal" && await tidalService.isAvailable()) {
+            await processTidalDownload(jobId, parsedArtist, parsedAlbum, job.userId);
+        } else {
+            // Use simple download manager for Lidarr/Soulseek downloads
+            const result = await simpleDownloadManager.startDownload(
+                jobId,
+                parsedArtist,
+                parsedAlbum,
+                mbid,
+                job.userId
+            );
+
+            if (!result.success) {
+                logger.error(`Failed to start download: ${result.error}`);
+            }
+        }
+    }
+}
+
+/**
+ * Process a TIDAL download: search → download album → update job → trigger scan
+ */
+async function processTidalDownload(
+    jobId: string,
+    artistName: string,
+    albumTitle: string,
+    userId: string
+) {
+    const existingJob = await prisma.downloadJob.findUnique({
+        where: { id: jobId },
+        select: { metadata: true },
+    });
+    const existingMetadata = (existingJob?.metadata as any) || {};
+
+    try {
+        // Mark job as processing with TIDAL source
+        await prisma.downloadJob.update({
+            where: { id: jobId },
+            data: {
+                status: "processing",
+                metadata: {
+                    ...existingMetadata,
+                    currentSource: "tidal",
+                    statusText: "Searching TIDAL...",
+                },
+            },
+        });
+
+        // Search TIDAL for the album
+        const match = await tidalService.findAlbum(artistName, albumTitle);
+        if (!match) {
+            // TIDAL search failed — check for fallback
+            const settings = await getSystemSettings();
+            const fallback = settings?.primaryFailureFallback;
+
+            if (fallback && fallback !== "none" && fallback !== "tidal") {
+                logger.debug(
+                    `[TIDAL] Album not found, falling back to ${fallback}`
+                );
+                await prisma.downloadJob.update({
+                    where: { id: jobId },
+                    data: {
+                        metadata: {
+                            ...existingMetadata,
+                            currentSource: fallback,
+                            statusText: `TIDAL not found → ${fallback}`,
+                        },
+                    },
+                });
+
+                if (fallback === "lidarr" || fallback === "soulseek") {
+                    const result = await simpleDownloadManager.startDownload(
+                        jobId,
+                        artistName,
+                        albumTitle,
+                        existingMetadata.albumMbid || "",
+                        userId
+                    );
+                    if (!result.success) {
+                        logger.error(`Fallback ${fallback} failed: ${result.error}`);
+                    }
+                    return;
+                }
+            }
+
+            throw new Error(
+                `Album not found on TIDAL: ${artistName} - ${albumTitle}`
+            );
+        }
+
+        logger.debug(
+            `[TIDAL] Found album: "${match.title}" by ${match.artist} (ID: ${match.albumId}, ${match.numberOfTracks} tracks)`
         );
 
-        if (!result.success) {
-            logger.error(`Failed to start download: ${result.error}`);
+        // Update status before download
+        await prisma.downloadJob.update({
+            where: { id: jobId },
+            data: {
+                metadata: {
+                    ...existingMetadata,
+                    currentSource: "tidal",
+                    statusText: `Downloading ${match.numberOfTracks} tracks...`,
+                    tidalAlbumId: match.albumId,
+                },
+            },
+        });
+
+        // Download the album — files go directly to /music
+        const result = await tidalService.downloadAlbum(match.albumId);
+
+        logger.debug(
+            `[TIDAL] Download complete: ${result.downloaded}/${result.total_tracks} tracks`
+        );
+
+        if (result.downloaded === 0) {
+            throw new Error(
+                `All ${result.total_tracks} tracks failed to download`
+            );
         }
+
+        // Mark job as completed
+        const statusText =
+            result.failed > 0
+                ? `${result.downloaded}/${result.total_tracks} tracks (${result.failed} failed)`
+                : `${result.downloaded} tracks`;
+
+        await prisma.downloadJob.update({
+            where: { id: jobId },
+            data: {
+                status: "completed",
+                completedAt: new Date(),
+                metadata: {
+                    ...existingMetadata,
+                    currentSource: "tidal",
+                    statusText: `TIDAL ✓ ${statusText}`,
+                    tidalAlbumId: match.albumId,
+                    tidalResult: {
+                        downloaded: result.downloaded,
+                        failed: result.failed,
+                        totalTracks: result.total_tracks,
+                    },
+                },
+            },
+        });
+
+        // Trigger a library scan so the backend picks up the new files
+        const { scanQueue } = await import("../workers/queues");
+        await scanQueue.add("scan", {
+            userId,
+            source: "tidal-download",
+            artistName: result.artist,
+            albumTitle: result.album_title,
+        });
+
+        logger.debug(
+            `[TIDAL] Scan queued for: ${result.artist} - ${result.album_title}`
+        );
+    } catch (error: any) {
+        logger.error(`[TIDAL] Download failed for job ${jobId}:`, error.message);
+
+        await prisma.downloadJob.update({
+            where: { id: jobId },
+            data: {
+                status: "failed",
+                error: error.message,
+                completedAt: new Date(),
+                metadata: {
+                    ...existingMetadata,
+                    currentSource: "tidal",
+                    statusText: "TIDAL failed",
+                    failedAt: new Date().toISOString(),
+                },
+            },
+        });
     }
 }
 

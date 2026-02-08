@@ -34,6 +34,14 @@ export interface SystemSettings {
     // Spotify (for playlist import)
     spotifyClientId: string;
     spotifyClientSecret: string;
+    // TIDAL
+    tidalEnabled: boolean;
+    tidalAccessToken: string;
+    tidalRefreshToken: string;
+    tidalUserId: string;
+    tidalCountryCode: string;
+    tidalQuality: "LOW" | "HIGH" | "LOSSLESS" | "HI_RES_LOSSLESS";
+    tidalFileTemplate: string;
     // Storage
     musicPath: string;
     downloadPath: string;
@@ -45,8 +53,8 @@ export interface SystemSettings {
     audioAnalyzerWorkers: number;
     soulseekConcurrentDownloads: number;
     // Download Preferences
-    downloadSource: "soulseek" | "lidarr";
-    primaryFailureFallback: "none" | "lidarr" | "soulseek";
+    downloadSource: "soulseek" | "lidarr" | "tidal";
+    primaryFailureFallback: "none" | "lidarr" | "soulseek" | "tidal";
 }
 
 export interface ApiKey {
